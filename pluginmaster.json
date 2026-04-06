@@ -1,0 +1,24 @@
+[
+    {
+        "Author": "mind",
+        "Name": "Active Venue Finder",
+        "Punchline": "Browse FFXIV venues and teleport to them with one click.",
+        "Description": "/avf - opens the Active Venue Finder window",
+        "InternalName": "ActiveVenueFinder",
+        "Tags": ["Venue", "RP", "Teleport", "Lifestream"],
+        "AssemblyVersion": "1.2.0.1",
+        "TestingAssemblyVersion": "1.2.0.1",
+        "RepoUrl": "https://github.com/NeoGriever/ActiveVenueFinder",
+        "ApplicableVersion": "any",
+        "DalamudApiLevel": 14,
+        "TestingDalamudApiLevel": 14,
+        "IsHide": "False",
+        "IsTestingExclusive": "False",
+        "DownloadCount": 0,
+        "LastUpdate": 1775466485,
+        "IconUrl": "https://raw.githubusercontent.com/NeoGriever/ActiveVenueFinder/main/plugins/ActiveVenueFinder/icon.png",
+        "DownloadLinkInstall": "https://github.com/NeoGriever/ActiveVenueFinder/raw/main/plugins/ActiveVenueFinder/latest.zip",
+        "DownloadLinkUpdate": "https://github.com/NeoGriever/ActiveVenueFinder/raw/main/plugins/ActiveVenueFinder/latest.zip",
+        "DownloadLinkTesting": "https://github.com/NeoGriever/ActiveVenueFinder/raw/main/plugins/ActiveVenueFinder/latest.zip"
+    }
+]

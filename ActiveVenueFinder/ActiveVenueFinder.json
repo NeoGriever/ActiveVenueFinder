@@ -1,0 +1,12 @@
+{
+    "Author": "mind",
+    "Name": "Active Venue Finder",
+    "Punchline": "Browse FFXIV venues and teleport to them with one click.",
+    "Description": "/avf - opens the Active Venue Finder window",
+    "InternalName": "ActiveVenueFinder",
+    "AssemblyVersion": "1.2.0.1",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 14,
+    "TestingDalamudApiLevel": 14,
+    "Tags": ["Venue", "RP", "Teleport", "Lifestream"]
+}
