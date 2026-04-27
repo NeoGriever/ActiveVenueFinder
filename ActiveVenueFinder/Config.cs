@@ -8,7 +8,7 @@ namespace ActiveVenueFinder;
 [Serializable]
 public sealed class Config : IPluginConfiguration
 {
-    public int Version { get; set; } = 0;
+    public int Version { get; set; } = 1;
 
     public string SelectedTimezoneId = "";
 
@@ -22,6 +22,22 @@ public sealed class Config : IPluginConfiguration
     public List<string> CustomTags = new();
 
     public bool PopoutOpen;
+
+    // Lookahead range -72..168 (hours)
+    public int InitialLookaheadHours = 0;
+
+    // Double-click action
+    public DoubleClickAction DoubleClickAction { get; set; } = DoubleClickAction.LifestreamGoto;
+
+    // Cache interval (seconds)
+    public int CacheIntervalSeconds { get; set; } = 3;
+
+    // Appearance
+    public AppearanceSettings Appearance { get; set; } = new();
+
+    // Filter defaults persisted across sessions
+    public string FilterWorld { get; set; } = "";
+    public string FilterDistrict { get; set; } = "";
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

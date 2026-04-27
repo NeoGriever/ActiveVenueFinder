@@ -5,95 +5,25 @@ using System.Net.Http;
 using System.Numerics;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Dalamud.Interface.Windowing;
-using Dalamud.Bindings.ImGui;
-using Dalamud.Plugin.Services;
-using Lumina.Excel.Sheets;
 using ActiveVenueFinder.Models;
+using ActiveVenueFinder.Services;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Windowing;
+using Dalamud.Plugin.Services;
 
 namespace ActiveVenueFinder.Windows;
 
 public sealed class VenueFinderWindow : Window, IDisposable
 {
     internal const string ApiUrl = "https://api.ffxivvenues.com/v1.0/venue";
-
-    internal static readonly Dictionary<string, Vector4> DataCenterColors = new()
-    {
-        { "Aether", new Vector4(0.5f, 0.8f, 1.0f, 1.0f) },
-        { "Primal", new Vector4(1.0f, 0.7f, 0.3f, 1.0f) },
-        { "Crystal", new Vector4(0.8f, 0.5f, 1.0f, 1.0f) },
-        { "Dynamis", new Vector4(0.4f, 0.9f, 0.4f, 1.0f) },
-        { "Chaos", new Vector4(1.0f, 0.4f, 0.4f, 1.0f) },
-        { "Light", new Vector4(1.0f, 1.0f, 0.5f, 1.0f) },
-        { "Elemental", new Vector4(0.3f, 0.9f, 0.9f, 1.0f) },
-        { "Gaia", new Vector4(1.0f, 0.5f, 0.7f, 1.0f) },
-        { "Mana", new Vector4(0.6f, 1.0f, 0.6f, 1.0f) },
-        { "Meteor", new Vector4(1.0f, 0.85f, 0.3f, 1.0f) },
-        { "Materia", new Vector4(0.4f, 0.7f, 1.0f, 1.0f) },
-    };
-
-    internal static readonly Dictionary<string, string> DataCenterRegions = new()
-    {
-        { "Aether", "NA" }, { "Primal", "NA" }, { "Crystal", "NA" }, { "Dynamis", "NA" },
-        { "Chaos", "EU" }, { "Light", "EU" },
-        { "Elemental", "JP" }, { "Gaia", "JP" }, { "Mana", "JP" }, { "Meteor", "JP" },
-        { "Materia", "OC" },
-    };
-
-    internal static readonly string[] PredefinedTags = { "Gamba", "Giveaway", "Court" };
-
-    private static readonly TimeZoneInfo EstZone = GetEstZone();
-
-    private static TimeZoneInfo GetEstZone()
-    {
-        try { return TimeZoneInfo.FindSystemTimeZoneById("America/New_York"); }
-        catch (TimeZoneNotFoundException) { }
-        try { return TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time"); }
-        catch (TimeZoneNotFoundException) { }
-        return TimeZoneInfo.CreateCustomTimeZone("EST", TimeSpan.FromHours(-5), "EST", "EST");
-    }
-
-    internal static readonly Dictionary<string, string> WorldToDataCenter = new()
-    {
-        // Aether
-        { "Adamantoise", "Aether" }, { "Cactuar", "Aether" }, { "Faerie", "Aether" }, { "Gilgamesh", "Aether" },
-        { "Jenova", "Aether" }, { "Midgardsormr", "Aether" }, { "Sargatanas", "Aether" }, { "Siren", "Aether" },
-        // Primal
-        { "Behemoth", "Primal" }, { "Excalibur", "Primal" }, { "Exodus", "Primal" }, { "Famfrit", "Primal" },
-        { "Hyperion", "Primal" }, { "Lamia", "Primal" }, { "Leviathan", "Primal" }, { "Ultros", "Primal" },
-        // Crystal
-        { "Balmung", "Crystal" }, { "Brynhildr", "Crystal" }, { "Coeurl", "Crystal" }, { "Diabolos", "Crystal" },
-        { "Goblin", "Crystal" }, { "Malboro", "Crystal" }, { "Mateus", "Crystal" }, { "Zalera", "Crystal" },
-        // Dynamis
-        { "Cuchulainn", "Dynamis" }, { "Golem", "Dynamis" }, { "Halicarnassus", "Dynamis" }, { "Kraken", "Dynamis" },
-        { "Maduin", "Dynamis" }, { "Marilith", "Dynamis" }, { "Rafflesia", "Dynamis" }, { "Seraph", "Dynamis" },
-        // Chaos
-        { "Cerberus", "Chaos" }, { "Louisoix", "Chaos" }, { "Moogle", "Chaos" }, { "Omega", "Chaos" },
-        { "Phantom", "Chaos" }, { "Ragnarok", "Chaos" }, { "Sagittarius", "Chaos" }, { "Spriggan", "Chaos" },
-        // Light
-        { "Alpha", "Light" }, { "Lich", "Light" }, { "Odin", "Light" }, { "Phoenix", "Light" },
-        { "Raiden", "Light" }, { "Shiva", "Light" }, { "Twintania", "Light" }, { "Zodiark", "Light" },
-        // Elemental
-        { "Aegis", "Elemental" }, { "Atomos", "Elemental" }, { "Carbuncle", "Elemental" }, { "Garuda", "Elemental" },
-        { "Gungnir", "Elemental" }, { "Kujata", "Elemental" }, { "Tonberry", "Elemental" }, { "Typhon", "Elemental" },
-        // Gaia
-        { "Alexander", "Gaia" }, { "Bahamut", "Gaia" }, { "Durandal", "Gaia" }, { "Fenrir", "Gaia" },
-        { "Ifrit", "Gaia" }, { "Ridill", "Gaia" }, { "Tiamat", "Gaia" }, { "Ultima", "Gaia" },
-        // Mana
-        { "Anima", "Mana" }, { "Asura", "Mana" }, { "Chocobo", "Mana" }, { "Hades", "Mana" },
-        { "Ixion", "Mana" }, { "Masamune", "Mana" }, { "Pandaemonium", "Mana" }, { "Titan", "Mana" },
-        // Meteor
-        { "Belias", "Meteor" }, { "Mandragora", "Meteor" }, { "Ramuh", "Meteor" }, { "Shinryu", "Meteor" },
-        { "Unicorn", "Meteor" }, { "Valefor", "Meteor" }, { "Yojimbo", "Meteor" }, { "Zeromus", "Meteor" },
-        // Materia
-        { "Bismarck", "Materia" }, { "Ravana", "Materia" }, { "Sephirot", "Materia" }, { "Sophia", "Materia" },
-        { "Zurvan", "Materia" },
-    };
+    private const double TimelineHours = 48.0;
 
     private readonly IPlayerState playerState;
     private readonly Config config;
     private readonly HttpClient httpClient = new();
     private readonly AddEditVenueWindow addEditWindow;
+    private readonly SettingsWindow settingsWindow;
+    private readonly TimezonePickerWindow timezonePicker;
 
     internal PopoutWindow? PopoutWindow { get; set; }
 
@@ -101,6 +31,7 @@ public sealed class VenueFinderWindow : Window, IDisposable
     private bool isLoading;
     private string? errorMessage;
     private string? pendingBlacklistId;
+    private bool openBlacklistConfirm;
 
     // Sort state
     private int sortColumnIndex = -1;
@@ -108,24 +39,30 @@ public sealed class VenueFinderWindow : Window, IDisposable
 
     // Context menu
     private Venue? contextMenuVenue;
-    private bool openBlacklistConfirm;
 
-    private TimeZoneInfo displayTimeZone = TimeZoneInfo.Local;
-    private readonly List<TimeZoneInfo> allTimeZones;
-    private int selectedTimezoneIndex;
+    private TimeZoneInfo displayTimeZone = TimelineCalculator.EasternTime;
 
     // Display cache
     private List<VenueRow>? cachedRows;
     private long lastCacheMs;
     private bool cacheInvalidated = true;
-    private const long CacheIntervalMs = 3000;
     private List<Venue>? cachedVenuesRef;
     private int cachedCustomVenueCount = -1;
     private string? lastKnownPlayerRegion;
     private string searchText = "";
     private string cachedSearchText = "";
+    private string filterWorld = "";
+    private string filterDistrict = "";
+    private string cachedFilterWorld = "";
+    private string cachedFilterDistrict = "";
     private int lookaheadHours;
     private int cachedLookaheadHours;
+    private DateTimeOffset cachedWindowStartUtc;
+    private int cachedAppearanceHash;
+    private string cachedTimeZoneId = "";
+
+    // Discovered districts (for District-Filter dropdown)
+    private List<string> availableDistricts = new();
 
     private sealed class VenueRow
     {
@@ -137,56 +74,48 @@ public sealed class VenueFinderWindow : Window, IDisposable
         public string RemainingDisplay = "";
         public bool IsFavorite;
         public bool IsCustom;
-        public string FavId = "";
-        public string GoId = "";
         public string WardStr = "";
         public string PlotStr = "";
-        public float TimelineStartFrac;
-        public float TimelineEndFrac;
-        public bool HasTimelineBar;
         public bool IsApartment;
         public bool IsOtherContinent;
+        public bool IsActive;
+        public List<TimeSlot> Slots = new();
         public HashSet<string> Tags = new();
     }
 
-    public VenueFinderWindow(Config config, IPlayerState playerState, AddEditVenueWindow addEditWindow)
+    public VenueFinderWindow(
+        Config config,
+        IPlayerState playerState,
+        AddEditVenueWindow addEditWindow,
+        SettingsWindow settingsWindow,
+        TimezonePickerWindow timezonePicker)
         : base("Active Venue Finder###ActiveVenueFinder")
     {
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(250, 150),
+            MinimumSize = new Vector2(700, 250),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
-        Size = new Vector2(1820, 500);
+        Size = new Vector2(1400, 600);
         SizeCondition = ImGuiCond.FirstUseEver;
 
         this.config = config;
         this.playerState = playerState;
         this.addEditWindow = addEditWindow;
+        this.settingsWindow = settingsWindow;
+        this.timezonePicker = timezonePicker;
         this.addEditWindow.OnSaved = () => cacheInvalidated = true;
-        allTimeZones = TimeZoneInfo.GetSystemTimeZones().ToList();
+        this.settingsWindow.OnAppearanceChanged = () => cacheInvalidated = true;
 
         if (!string.IsNullOrEmpty(config.SelectedTimezoneId))
         {
-            try
-            {
-                displayTimeZone = TimeZoneInfo.FindSystemTimeZoneById(config.SelectedTimezoneId);
-            }
-            catch
-            {
-                displayTimeZone = TimeZoneInfo.Local;
-            }
+            try { displayTimeZone = TimeZoneInfo.FindSystemTimeZoneById(config.SelectedTimezoneId); }
+            catch { displayTimeZone = TimelineCalculator.EasternTime; }
         }
 
-        selectedTimezoneIndex = 0;
-        for (var i = 0; i < allTimeZones.Count; i++)
-        {
-            if (allTimeZones[i].Id == displayTimeZone.Id && !string.IsNullOrEmpty(config.SelectedTimezoneId))
-            {
-                selectedTimezoneIndex = i + 1;
-                break;
-            }
-        }
+        lookaheadHours = config.InitialLookaheadHours;
+        filterWorld = config.FilterWorld;
+        filterDistrict = config.FilterDistrict;
     }
 
     public void Dispose()
@@ -194,10 +123,9 @@ public sealed class VenueFinderWindow : Window, IDisposable
         httpClient.Dispose();
     }
 
-    public override void OnOpen()
-    {
-        FetchVenues();
-    }
+    public override void OnOpen() => FetchVenues();
+
+    public List<Venue> GetResolvedVenues() => VenueResolver.BuildAll(venues, config);
 
     private void FetchVenues()
     {
@@ -213,6 +141,7 @@ public sealed class VenueFinderWindow : Window, IDisposable
                 var json = await httpClient.GetStringAsync(ApiUrl);
                 var result = JsonSerializer.Deserialize<List<Venue>>(json);
                 venues = result ?? new List<Venue>();
+                cacheInvalidated = true;
             }
             catch (Exception ex)
             {
@@ -226,301 +155,29 @@ public sealed class VenueFinderWindow : Window, IDisposable
         });
     }
 
-    internal static bool IsVenueActiveNow(Venue venue)
-    {
-        if (venue.ScheduleOverrides.Count > 0)
-            return venue.ScheduleOverrides.Any(o => o.IsNow && o.Open);
-
-        return venue.Resolution?.IsNow ?? false;
-    }
-
-    internal static (TimeSpan remaining, bool alwaysOpen) GetRemainingOpenInfo(Venue venue)
-    {
-        string? startIso = null;
-        string? endIso = null;
-
-        if (venue.ScheduleOverrides.Count > 0)
-        {
-            var active = venue.ScheduleOverrides.FirstOrDefault(o => o.IsNow && o.Open);
-            startIso = active?.Start;
-            endIso = active?.End;
-        }
-        else if (venue.Resolution is { IsNow: true })
-        {
-            startIso = venue.Resolution.Start;
-            endIso = venue.Resolution.End;
-        }
-
-        if (string.IsNullOrEmpty(endIso))
-            return (TimeSpan.Zero, false);
-
-        try
-        {
-            var end = DateTimeOffset.Parse(endIso);
-            var remaining = end - DateTimeOffset.UtcNow;
-            if (remaining <= TimeSpan.Zero)
-                return (TimeSpan.Zero, false);
-
-            if (!string.IsNullOrEmpty(startIso))
-            {
-                var start = DateTimeOffset.Parse(startIso);
-                var totalDuration = end - start;
-                if (totalDuration.TotalHours > 18)
-                    return (remaining, true);
-            }
-
-            return (remaining, false);
-        }
-        catch
-        {
-            return (TimeSpan.Zero, false);
-        }
-    }
-
-    private static TimeSpan GetSortableRemainingTime(Venue venue)
-    {
-        var (remaining, alwaysOpen) = GetRemainingOpenInfo(venue);
-        if (alwaysOpen) return TimeSpan.FromMinutes(1);
-        if (remaining > TimeSpan.Zero) return remaining;
-
-        var closedSince = GetClosedSinceDuration(venue);
-        if (closedSince == TimeSpan.MaxValue)
-            return TimeSpan.MinValue;
-        return -closedSince;
-    }
-
-    private static TimeSpan GetClosedSinceDuration(Venue venue)
-    {
-        if (venue.ScheduleOverrides.Count > 0)
-        {
-            DateTimeOffset? latest = null;
-            foreach (var o in venue.ScheduleOverrides)
-            {
-                if (!string.IsNullOrEmpty(o.End))
-                {
-                    try
-                    {
-                        var end = DateTimeOffset.Parse(o.End);
-                        if (latest == null || end > latest)
-                            latest = end;
-                    }
-                    catch { }
-                }
-            }
-            if (latest != null)
-            {
-                var since = DateTimeOffset.UtcNow - latest.Value;
-                return since > TimeSpan.Zero ? since : TimeSpan.MaxValue;
-            }
-        }
-
-        string? endIso = null;
-        if (venue.Resolution != null && !string.IsNullOrEmpty(venue.Resolution.End))
-            endIso = venue.Resolution.End;
-
-        if (string.IsNullOrEmpty(endIso))
-            return TimeSpan.MaxValue;
-
-        try
-        {
-            var endDt = DateTimeOffset.Parse(endIso);
-            var since = DateTimeOffset.UtcNow - endDt;
-            return since > TimeSpan.Zero ? since : TimeSpan.MaxValue;
-        }
-        catch
-        {
-            return TimeSpan.MaxValue;
-        }
-    }
-
-    private static TimeSpan GetTimeUntilOpening(Venue venue)
-    {
-        if (venue.Resolution is { IsNow: false } && !string.IsNullOrEmpty(venue.Resolution.Start))
-        {
-            try
-            {
-                var start = DateTimeOffset.Parse(venue.Resolution.Start);
-                if (start > DateTimeOffset.UtcNow)
-                    return start - DateTimeOffset.UtcNow;
-            }
-            catch { }
-        }
-
-        // Check schedule for next occurrence today in EST
-        var estNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, EstZone);
-        var estDayOfWeek = (int)estNow.DayOfWeek;
-        var todaySchedule = venue.Schedule.FirstOrDefault(s => s.Day == estDayOfWeek);
-        if (todaySchedule != null)
-        {
-            var startHour = todaySchedule.Start.Hour;
-            var startMinute = todaySchedule.Start.Minute;
-            var schedStart = new DateTime(estNow.Year, estNow.Month, estNow.Day, startHour, startMinute, 0);
-            if (schedStart > estNow)
-                return schedStart - estNow;
-        }
-
-        return TimeSpan.MaxValue;
-    }
-
-    private static (float startFrac, float endFrac, bool hasBar) ComputeTimelineBar(Venue venue, TimeZoneInfo tz, int lookaheadHours = 0)
-    {
-        // Get start/end ISO timestamps from overrides or resolution
-        string? startIso = null, endIso = null;
-
-        if (venue.ScheduleOverrides.Count > 0)
-        {
-            var active = venue.ScheduleOverrides.FirstOrDefault(o => o.Open && o.IsNow);
-            if (active != null)
-            {
-                startIso = active.Start;
-                endIso = active.End;
-            }
-        }
-
-        if (string.IsNullOrEmpty(startIso) && venue.Resolution != null)
-        {
-            startIso = venue.Resolution.Start;
-            endIso = venue.Resolution.End;
-        }
-
-        if (string.IsNullOrEmpty(startIso) || string.IsNullOrEmpty(endIso))
-            return (0, 0, false);
-
-        try
-        {
-            var startDto = DateTimeOffset.Parse(startIso);
-            var endDto = DateTimeOffset.Parse(endIso);
-            var now = DateTimeOffset.UtcNow;
-
-            var isOpen = venue.Resolution?.IsNow == true ||
-                         venue.ScheduleOverrides.Any(o => o.Open && o.IsNow);
-
-            if (!isOpen && endDto <= now)
-                return (0, 0, false);
-
-            // Convert to selected timezone and position on the 2-day (48h) timeline
-            var tzNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
-            var todayMidnight = new DateTimeOffset(tzNow.Date, tz.GetUtcOffset(tzNow))
-                                + TimeSpan.FromHours(lookaheadHours);
-            var startEst = TimeZoneInfo.ConvertTime(startDto, tz);
-            var endEst = TimeZoneInfo.ConvertTime(endDto, tz);
-
-            var sf = (float)((startEst - todayMidnight).TotalHours / 48.0);
-            var ef = (float)((endEst - todayMidnight).TotalHours / 48.0);
-
-            return (Math.Clamp(sf, 0, 1), Math.Clamp(ef, 0, 1), true);
-        }
-        catch
-        {
-            return (0, 0, false);
-        }
-    }
-
-    internal static string FormatRemainingTime(Venue venue)
-    {
-        var (remaining, alwaysOpen) = GetRemainingOpenInfo(venue);
-        if (remaining == TimeSpan.Zero)
-            return "--:--";
-        if (alwaysOpen)
-            return "Always";
-        return $"{(int)remaining.TotalHours:D2}:{remaining.Minutes:D2}";
-    }
-
-    private string FormatTime(string? isoTime)
-    {
-        if (string.IsNullOrEmpty(isoTime))
-            return "--:--";
-
-        try
-        {
-            var dto = DateTimeOffset.Parse(isoTime);
-            var converted = TimeZoneInfo.ConvertTime(dto, displayTimeZone);
-            return converted.ToString("HH:mm");
-        }
-        catch
-        {
-            return "--:--";
-        }
-    }
-
-    private (string start, string end) GetDisplayTimes(Venue venue)
-    {
-        if (venue.ScheduleOverrides.Count > 0)
-        {
-            var activeOverride = venue.ScheduleOverrides.FirstOrDefault(o => o.IsNow && o.Open)
-                                 ?? venue.ScheduleOverrides.FirstOrDefault();
-            if (activeOverride != null)
-                return (FormatTime(activeOverride.Start), FormatTime(activeOverride.End));
-        }
-
-        if (venue.Resolution != null)
-            return (FormatTime(venue.Resolution.Start), FormatTime(venue.Resolution.End));
-
-        return ("--:--", "--:--");
-    }
-
-    private Vector4 GetVenueColor(Venue venue, string? playerRegion)
-    {
-        if (config.Blacklist.Contains(venue.Id))
-            return new Vector4(0.6f, 0.15f, 0.15f, 0.6f);
-
-        if (playerRegion != null && GetVenueRegion(venue) != playerRegion)
-            return new Vector4(0.4f, 0.4f, 0.4f, 0.6f);
-
-        var active = IsVenueActiveNow(venue);
-        if (DataCenterColors.TryGetValue(venue.Location.DataCenter, out var color))
-        {
-            return active ? color : color with { W = 0.6f };
-        }
-        return active ? new Vector4(1, 1, 1, 1) : new Vector4(1, 1, 1, 0.6f);
-    }
-
-    internal static string GetVenueRegion(Venue venue)
-    {
-        return DataCenterRegions.TryGetValue(venue.Location.DataCenter, out var region) ? region : "??";
-    }
-
     private string? GetPlayerRegion()
     {
-        if (!playerState.IsLoaded)
-            return lastKnownPlayerRegion;
+        if (!playerState.IsLoaded) return lastKnownPlayerRegion;
         try
         {
             var dcName = playerState.HomeWorld.Value.DataCenter.Value.Name.ToString();
-            if (DataCenterRegions.TryGetValue(dcName, out var region))
+            if (VenueResolver.DataCenterRegions.TryGetValue(dcName, out var region))
             {
                 lastKnownPlayerRegion = region;
                 return region;
             }
             return lastKnownPlayerRegion;
         }
-        catch (InvalidOperationException)
-        {
-            return lastKnownPlayerRegion;
-        }
+        catch (InvalidOperationException) { return lastKnownPlayerRegion; }
     }
 
-    internal static string BuildLifestreamCommand(VenueLocation loc)
-    {
-        var districtShort = loc.District.Split(' ')[0];
-        var target = loc.Apartment is > 0
-            ? $"A{loc.Apartment}"
-            : $"P{loc.Plot}";
-        return $"/li {loc.World} {districtShort} W{loc.Ward} {target}";
-    }
-
-    internal static bool IsCustomVenue(Venue venue)
-    {
-        return int.TryParse(venue.Id, out _);
-    }
-
-    internal HashSet<string> GetEffectiveTags(Venue venue)
+    private HashSet<string> GetEffectiveTags(Venue venue)
     {
         var tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         if (config.VenueOverrides.TryGetValue(venue.Id, out var ov))
             tags.UnionWith(ov.Tags);
-        else if (IsCustomVenue(venue))
+        else if (VenueResolver.IsCustomVenue(venue))
         {
             var cv = config.CustomVenues.FirstOrDefault(c => c.Id.ToString() == venue.Id);
             if (cv != null) tags.UnionWith(cv.Tags);
@@ -529,7 +186,7 @@ public sealed class VenueFinderWindow : Window, IDisposable
         var descText = string.Join(" ", venue.Description);
         if (!string.IsNullOrEmpty(descText))
         {
-            foreach (var tag in PredefinedTags.Concat(config.CustomTags))
+            foreach (var tag in VenueResolver.PredefinedTags.Concat(config.CustomTags))
             {
                 if (descText.Contains(tag, StringComparison.OrdinalIgnoreCase))
                     tags.Add(tag);
@@ -539,137 +196,81 @@ public sealed class VenueFinderWindow : Window, IDisposable
         return tags;
     }
 
-    internal static void ResolveCustomSchedules(Venue venue, string timezoneId, List<CustomVenueSchedule> schedules)
+    public void DispatchAction(Venue venue, DoubleClickAction action)
     {
-        if (schedules.Count == 0)
-            return;
-
-        try
+        switch (action)
         {
-            var tz = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
-            var utcNow = DateTimeOffset.UtcNow;
-            var localNow = TimeZoneInfo.ConvertTime(utcNow, tz);
-            var today = localNow.DateTime.Date;
-
-            foreach (var sched in schedules)
+            case DoubleClickAction.LifestreamGoto:
             {
-                var daysBack = ((int)localNow.DayOfWeek - (int)sched.Day + 7) % 7;
-                var schedDate = today.AddDays(-daysBack);
-                var startDt = new DateTime(schedDate.Year, schedDate.Month, schedDate.Day,
-                    sched.StartHour, sched.StartMinute, 0);
-                var endDate = sched.NextDay ? schedDate.AddDays(1) : schedDate;
-                var endDt = new DateTime(endDate.Year, endDate.Month, endDate.Day,
-                    sched.EndHour, sched.EndMinute, 0);
-
-                if (localNow.DateTime >= startDt && localNow.DateTime < endDt)
-                {
-                    var startOffset = new DateTimeOffset(startDt, tz.GetUtcOffset(startDt));
-                    var endOffset = new DateTimeOffset(endDt, tz.GetUtcOffset(endDt));
-                    venue.Resolution = new VenueResolution
-                    {
-                        IsNow = true,
-                        Start = startOffset.ToString("o"),
-                        End = endOffset.ToString("o"),
-                        IsWithinWeek = true,
-                    };
-                    return;
-                }
+                var cmd = VenueResolver.BuildLifestreamCommand(venue.Location);
+                Plugin.Log.Information($"Travel: {cmd}");
+                Plugin.SendChatCommand(cmd);
+                break;
             }
+            case DoubleClickAction.OpenVenuePage:
+            {
+                if (!VenueResolver.IsCustomVenue(venue))
+                    Dalamud.Utility.Util.OpenLink(VenueResolver.BuildVenuePageUrl(venue));
+                break;
+            }
+            case DoubleClickAction.CopyAddress:
+                ImGui.SetClipboardText(VenueResolver.BuildLifestreamCommand(venue.Location));
+                break;
+            case DoubleClickAction.CopyName:
+                ImGui.SetClipboardText(venue.Name);
+                break;
+            case DoubleClickAction.CopyVenuePageUrl:
+                if (!VenueResolver.IsCustomVenue(venue))
+                    ImGui.SetClipboardText(VenueResolver.BuildVenuePageUrl(venue));
+                break;
+            case DoubleClickAction.None:
+            default:
+                break;
         }
-        catch { }
     }
 
-    internal Venue CustomToVenue(CustomVenue cv)
+    private Vector4 GetVenueColor(Venue venue, string? playerRegion, bool isActive)
     {
-        var dc = WorldToDataCenter.GetValueOrDefault(cv.World, "");
-        var venue = new Venue
-        {
-            Id = cv.Id.ToString(),
-            Name = cv.Name,
-            Sfw = cv.Sfw,
-            Location = new VenueLocation
-            {
-                DataCenter = dc,
-                World = cv.World,
-                District = cv.District,
-                Ward = cv.Ward,
-                Plot = cv.Plot,
-                Apartment = cv.Apartment,
-                Subdivision = cv.Subdivision,
-            },
-        };
-        ResolveCustomSchedules(venue, cv.TimezoneId, cv.Schedules);
-        return venue;
+        var a = config.Appearance;
+        if (config.Blacklist.Contains(venue.Id))
+            return a.BlacklistTextColor;
+        if (playerRegion != null && VenueResolver.GetVenueRegion(venue) != playerRegion)
+            return a.OtherContinentTextColor;
+        if (VenueResolver.DataCenterColors.TryGetValue(venue.Location.DataCenter, out var color))
+            return isActive ? color : color with { W = 0.6f };
+        return isActive ? new Vector4(1, 1, 1, 1) : new Vector4(1, 1, 1, 0.6f);
     }
 
-    internal Venue ApplyOverride(Venue apiVenue, VenueOverride ov)
+    private DateTimeOffset ComputeWindowStartUtc()
     {
-        var dc = WorldToDataCenter.GetValueOrDefault(ov.World, apiVenue.Location.DataCenter);
-        var venue = new Venue
-        {
-            Id = apiVenue.Id,
-            Name = ov.Name,
-            Sfw = ov.Sfw,
-            Location = new VenueLocation
-            {
-                DataCenter = dc,
-                World = ov.World,
-                District = ov.District,
-                Ward = ov.Ward,
-                Plot = ov.Plot,
-                Apartment = ov.Apartment,
-                Subdivision = ov.Subdivision,
-            },
-        };
-
-        if (ov.Schedules.Count > 0)
-        {
-            ResolveCustomSchedules(venue, ov.TimezoneId, ov.Schedules);
-        }
-        else
-        {
-            venue.Schedule = apiVenue.Schedule;
-            venue.ScheduleOverrides = apiVenue.ScheduleOverrides;
-            venue.Resolution = apiVenue.Resolution;
-        }
-
-        return venue;
+        var nowUtc = DateTimeOffset.UtcNow;
+        var tzNow = TimeZoneInfo.ConvertTime(nowUtc, displayTimeZone);
+        var localMidnight = tzNow.Date;
+        var midnightOffset = displayTimeZone.GetUtcOffset(localMidnight);
+        var midnightUtc = new DateTimeOffset(localMidnight, midnightOffset).ToUniversalTime();
+        return midnightUtc + TimeSpan.FromHours(lookaheadHours);
     }
 
     private bool NeedsRebuild()
     {
-        if (cachedRows == null || cacheInvalidated)
-            return true;
-        if (!ReferenceEquals(venues, cachedVenuesRef))
-            return true;
-        if (config.CustomVenues.Count != cachedCustomVenueCount)
-            return true;
-        if (searchText != cachedSearchText)
-            return true;
-        if (lookaheadHours != cachedLookaheadHours)
-            return true;
-        if (Environment.TickCount64 - lastCacheMs >= CacheIntervalMs)
-            return true;
+        if (cachedRows == null || cacheInvalidated) return true;
+        if (!ReferenceEquals(venues, cachedVenuesRef)) return true;
+        if (config.CustomVenues.Count != cachedCustomVenueCount) return true;
+        if (searchText != cachedSearchText) return true;
+        if (filterWorld != cachedFilterWorld) return true;
+        if (filterDistrict != cachedFilterDistrict) return true;
+        if (lookaheadHours != cachedLookaheadHours) return true;
+        if (displayTimeZone.Id != cachedTimeZoneId) return true;
+        if (config.Appearance.ComputeHash() != cachedAppearanceHash) return true;
+        if (Environment.TickCount64 - lastCacheMs >= config.CacheIntervalSeconds * 1000L) return true;
         return false;
     }
 
     private void RebuildCache(string? playerRegion)
     {
-        // Flow: API venues → apply overrides → add custom venues → sort
-        var allVenues = new List<Venue>();
-        if (venues != null)
-        {
-            foreach (var v in venues)
-            {
-                allVenues.Add(config.VenueOverrides.TryGetValue(v.Id, out var ov)
-                    ? ApplyOverride(v, ov)
-                    : v);
-            }
-        }
-        foreach (var cv in config.CustomVenues)
-            allVenues.Add(CustomToVenue(cv));
+        var allVenues = VenueResolver.BuildAll(venues, config);
 
-        // Apply search filter
+        // Search filter (name or T:tag)
         if (!string.IsNullOrEmpty(searchText))
         {
             if (searchText.StartsWith("T:", StringComparison.OrdinalIgnoreCase))
@@ -677,10 +278,7 @@ public sealed class VenueFinderWindow : Window, IDisposable
                 var tagQuery = searchText.Substring(2).Trim();
                 if (!string.IsNullOrEmpty(tagQuery))
                     allVenues.RemoveAll(v =>
-                    {
-                        var tags = GetEffectiveTags(v);
-                        return !tags.Any(t => t.StartsWith(tagQuery, StringComparison.OrdinalIgnoreCase));
-                    });
+                        !GetEffectiveTags(v).Any(t => t.StartsWith(tagQuery, StringComparison.OrdinalIgnoreCase)));
             }
             else
             {
@@ -689,16 +287,70 @@ public sealed class VenueFinderWindow : Window, IDisposable
         }
         cachedSearchText = searchText;
 
-        // Pre-compute sort keys once per venue
-        var sortKeys = new Dictionary<string, (TimeSpan sortTime, bool isActive, string region, TimeSpan timeUntilOpen)>(allVenues.Count);
+        // World filter
+        if (!string.IsNullOrEmpty(filterWorld))
+        {
+            if (filterWorld.StartsWith("DC:", StringComparison.Ordinal))
+            {
+                var dc = filterWorld.Substring(3);
+                allVenues.RemoveAll(v => !string.Equals(v.Location.DataCenter, dc, StringComparison.OrdinalIgnoreCase));
+            }
+            else if (filterWorld.StartsWith("World:", StringComparison.Ordinal))
+            {
+                var w = filterWorld.Substring(6);
+                allVenues.RemoveAll(v => !string.Equals(v.Location.World, w, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+        cachedFilterWorld = filterWorld;
+
+        // District filter
+        if (!string.IsNullOrEmpty(filterDistrict))
+        {
+            allVenues.RemoveAll(v => !string.Equals(v.Location.District, filterDistrict, StringComparison.OrdinalIgnoreCase));
+        }
+        cachedFilterDistrict = filterDistrict;
+
+        // Compute window
+        var windowStartUtc = ComputeWindowStartUtc();
+        var windowEndUtc = windowStartUtc + TimeSpan.FromHours(TimelineHours);
+
+        // Slots per venue
+        var slotsPerVenue = new Dictionary<string, List<TimeSlot>>(allVenues.Count);
         foreach (var v in allVenues)
         {
-            var isActive = IsVenueActiveNow(v);
-            sortKeys[v.Id] = (GetSortableRemainingTime(v), isActive, GetVenueRegion(v),
-                isActive ? TimeSpan.Zero : GetTimeUntilOpening(v));
+            var horizon = TimeSpan.FromHours(Math.Max(72, TimelineHours - lookaheadHours));
+            // For sort/timing we need a wider lookahead than just the visible window:
+            // include past 24h and future 7 days regardless of window.
+            var nowUtc = DateTimeOffset.UtcNow;
+            var sortWindowStart = (windowStartUtc < nowUtc - TimeSpan.FromDays(1)) ? windowStartUtc : nowUtc - TimeSpan.FromDays(1);
+            var sortWindowEnd = (windowEndUtc > nowUtc + TimeSpan.FromDays(7)) ? windowEndUtc : nowUtc + TimeSpan.FromDays(7);
+            slotsPerVenue[v.Id] = TimelineCalculator.GetSlotsInWindow(v, sortWindowStart, sortWindowEnd);
         }
 
-        // Sort using pre-computed keys (no DateTimeOffset.Parse in comparator)
+        // Sort keys
+        var sortKeys = new Dictionary<string, (TimeSpan sortTime, bool isActive, string region, TimeSpan timeUntilOpen)>(allVenues.Count);
+        var nowUtc2 = DateTimeOffset.UtcNow;
+        foreach (var v in allVenues)
+        {
+            var slots = slotsPerVenue[v.Id];
+            var active = TimelineCalculator.GetActiveSlot(slots);
+            var isActive = active.HasValue;
+            TimeSpan sortTime;
+            if (active.HasValue)
+            {
+                sortTime = active.Value.AlwaysOpen ? TimeSpan.FromMinutes(1) : (active.Value.EndUtc - nowUtc2);
+            }
+            else
+            {
+                var next = TimelineCalculator.GetNextSlot(slots, nowUtc2);
+                sortTime = next.HasValue ? -(next.Value.StartUtc - nowUtc2) : TimeSpan.MinValue;
+            }
+            var nextOpen = TimelineCalculator.GetNextSlot(slots, nowUtc2);
+            var timeUntilOpen = nextOpen.HasValue ? nextOpen.Value.StartUtc - nowUtc2 : TimeSpan.MaxValue;
+            sortKeys[v.Id] = (sortTime, isActive, VenueResolver.GetVenueRegion(v), timeUntilOpen);
+        }
+
+        // Sort
         var localSortCol = sortColumnIndex;
         var localSortDir = sortDirection;
         allVenues.Sort((a, b) =>
@@ -720,7 +372,6 @@ public sealed class VenueFinderWindow : Window, IDisposable
 
             if (localSortCol < 0)
             {
-                // Default sort
                 if (playerRegion != null)
                 {
                     var ra = ka.region != playerRegion ? 1 : 0;
@@ -728,22 +379,18 @@ public sealed class VenueFinderWindow : Window, IDisposable
                     c = ra.CompareTo(rb);
                     if (c != 0) return c;
                 }
-
-                // Active venues first
-                var oa2 = ka.isActive ? 0 : 1;
-                var ob2 = kb.isActive ? 0 : 1;
-                c = oa2.CompareTo(ob2);
+                var oa = ka.isActive ? 0 : 1;
+                var ob = kb.isActive ? 0 : 1;
+                c = oa.CompareTo(ob);
                 if (c != 0) return c;
 
                 if (ka.isActive && kb.isActive)
                 {
-                    // Among active: most remaining time first
                     c = kb.sortTime.CompareTo(ka.sortTime);
                     if (c != 0) return c;
                 }
                 else
                 {
-                    // Among inactive: soonest opening first
                     c = ka.timeUntilOpen.CompareTo(kb.timeUntilOpen);
                     if (c != 0) return c;
                 }
@@ -755,92 +402,127 @@ public sealed class VenueFinderWindow : Window, IDisposable
                 return string.Compare(a.Location.World, b.Location.World, StringComparison.OrdinalIgnoreCase);
             }
 
-            if (localSortCol is 3 or 4)
+            // Time-column sort (col 9)
+            if (localSortCol == 9)
             {
-                // Time-based sort
                 c = ka.sortTime.CompareTo(kb.sortTime);
                 return localSortDir == ImGuiSortDirection.Descending ? -c : c;
             }
 
-            // Non-time: open first
-            var oa = ka.isActive ? 0 : 1;
-            var ob = kb.isActive ? 0 : 1;
-            c = oa.CompareTo(ob);
+            // Other: open first, then column
+            var oaC = ka.isActive ? 0 : 1;
+            var obC = kb.isActive ? 0 : 1;
+            c = oaC.CompareTo(obC);
             if (c != 0) return c;
 
-            // Then by column (indices shifted: Timeline is column 5)
             c = localSortCol switch
             {
                 0 => string.Compare(ka.region, kb.region, StringComparison.OrdinalIgnoreCase),
-                1 => a.Sfw.CompareTo(b.Sfw),
-                2 => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
-                6 => string.Compare(a.Location.World, b.Location.World, StringComparison.OrdinalIgnoreCase),
-                7 => string.Compare(a.Location.District, b.Location.District, StringComparison.OrdinalIgnoreCase),
-                8 => a.Location.Ward.CompareTo(b.Location.Ward),
-                9 => a.Location.Plot.CompareTo(b.Location.Plot),
+                1 => string.Compare(a.Location.World, b.Location.World, StringComparison.OrdinalIgnoreCase),
+                2 => string.Compare(a.Location.District, b.Location.District, StringComparison.OrdinalIgnoreCase),
+                3 => a.Location.Ward.CompareTo(b.Location.Ward),
+                4 => a.Location.Plot.CompareTo(b.Location.Plot),
+                5 => a.Sfw.CompareTo(b.Sfw),
+                6 => (config.Favorites.Contains(a.Id) ? 0 : 1).CompareTo(config.Favorites.Contains(b.Id) ? 0 : 1),
+                7 => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
                 _ => 0,
             };
             return localSortDir == ImGuiSortDirection.Descending ? -c : c;
         });
 
-        // Build row cache with pre-computed display data
+        // Build VenueRows
         var rows = new List<VenueRow>(allVenues.Count);
+        var districtSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var appearance = config.Appearance;
+
         foreach (var venue in allVenues)
         {
             var sk = sortKeys[venue.Id];
-            var times = GetDisplayTimes(venue);
-            var isCustom = IsCustomVenue(venue);
+            var slots = slotsPerVenue[venue.Id];
+            var isCustom = VenueResolver.IsCustomVenue(venue);
 
             Vector4 bgColor;
             if (isCustom)
             {
-                bgColor = new Vector4(10f / 255, 19f / 255, 26f / 255, 1.0f);
+                bgColor = appearance.CustomBgColor;
             }
             else if (!sk.isActive)
             {
-                bgColor = new Vector4(33f / 255, 23f / 255, 26f / 255, 1.0f);
+                bgColor = appearance.ClosedBgColor;
             }
             else
             {
-                var (remaining, _) = GetRemainingOpenInfo(venue);
-                var minutes = remaining.TotalMinutes;
-                var t = Math.Clamp((minutes - 10) / (120 - 10), 0, 1);
-                var r = (float)((43 * (1 - t) + 13 * t) / 255.0);
-                var g = (float)((9 * (1 - t) + 36 * t) / 255.0);
-                var bl = (float)((18 * (1 - t) + 9 * t) / 255.0);
-                bgColor = new Vector4(r, g, bl, 1.0f);
+                var (rem, _) = TimelineCalculator.GetRemainingFromActive(slots);
+                var minutes = rem.TotalMinutes;
+                var t = (float)Math.Clamp((minutes - 10) / (120 - 10), 0, 1);
+                bgColor = Vector4.Lerp(appearance.ActiveBgGradientStart, appearance.ActiveBgGradientEnd, t);
             }
 
-            // Always-open venues: skip lookahead shift calculation (optimization)
-            var (_, isAlwaysOpen) = GetRemainingOpenInfo(venue);
-            var effectiveLookahead = isAlwaysOpen ? 0 : lookaheadHours;
-            var tl = ComputeTimelineBar(venue, displayTimeZone, effectiveLookahead);
+            // Time display: based on the *active* slot if any, else the next upcoming.
+            string timeDisplay;
+            string remainingDisplay;
+            var active = TimelineCalculator.GetActiveSlot(slots);
+            if (active.HasValue)
+            {
+                var startLocal = TimeZoneInfo.ConvertTime(active.Value.StartUtc, displayTimeZone);
+                var endLocal = TimeZoneInfo.ConvertTime(active.Value.EndUtc, displayTimeZone);
+                timeDisplay = $"{startLocal:HH:mm} - {endLocal:HH:mm}";
+                if (active.Value.AlwaysOpen)
+                {
+                    remainingDisplay = "Always";
+                }
+                else
+                {
+                    var rem = active.Value.EndUtc - DateTimeOffset.UtcNow;
+                    if (rem <= TimeSpan.Zero) remainingDisplay = "--:--";
+                    else remainingDisplay = $"{(int)rem.TotalHours:D2}:{rem.Minutes:D2}";
+                }
+            }
+            else
+            {
+                var next = TimelineCalculator.GetNextSlot(slots, DateTimeOffset.UtcNow);
+                if (next.HasValue)
+                {
+                    var startLocal = TimeZoneInfo.ConvertTime(next.Value.StartUtc, displayTimeZone);
+                    var endLocal = TimeZoneInfo.ConvertTime(next.Value.EndUtc, displayTimeZone);
+                    timeDisplay = $"{startLocal:HH:mm} - {endLocal:HH:mm}";
+                    remainingDisplay = "--:--";
+                }
+                else
+                {
+                    timeDisplay = "--:-- - --:--";
+                    remainingDisplay = "--:--";
+                }
+            }
 
             var isOtherContinent = playerRegion != null && sk.region != playerRegion;
+
             rows.Add(new VenueRow
             {
                 Venue = venue,
-                TextColor = GetVenueColor(venue, playerRegion),
+                TextColor = GetVenueColor(venue, playerRegion, sk.isActive),
                 BgColor = bgColor,
                 Region = sk.region,
-                TimeDisplay = $"{times.start} - {times.end}",
-                RemainingDisplay = FormatRemainingTime(venue),
+                TimeDisplay = timeDisplay,
+                RemainingDisplay = remainingDisplay,
                 IsFavorite = config.Favorites.Contains(venue.Id),
                 IsCustom = isCustom,
-                FavId = $"*##{venue.Id}_fav",
-                GoId = $"Go##{venue.Id}",
                 WardStr = venue.Location.Ward.ToString(),
                 PlotStr = venue.Location.Apartment is > 0
                     ? $"A{venue.Location.Apartment}"
-                    : venue.Location.Plot.ToString(),
+                    : $"P{venue.Location.Plot}",
                 IsApartment = venue.Location.Apartment is > 0,
                 IsOtherContinent = isOtherContinent,
+                IsActive = sk.isActive,
+                Slots = slots,
                 Tags = GetEffectiveTags(venue),
-                TimelineStartFrac = tl.startFrac,
-                TimelineEndFrac = tl.endFrac,
-                HasTimelineBar = tl.hasBar,
             });
+
+            if (!string.IsNullOrEmpty(venue.Location.District))
+                districtSet.Add(venue.Location.District);
         }
+
+        availableDistricts = districtSet.OrderBy(d => d, StringComparer.OrdinalIgnoreCase).ToList();
 
         cachedRows = rows;
         lastCacheMs = Environment.TickCount64;
@@ -848,89 +530,202 @@ public sealed class VenueFinderWindow : Window, IDisposable
         cachedVenuesRef = venues;
         cachedCustomVenueCount = config.CustomVenues.Count;
         cachedLookaheadHours = lookaheadHours;
+        cachedWindowStartUtc = windowStartUtc;
+        cachedAppearanceHash = appearance.ComputeHash();
+        cachedTimeZoneId = displayTimeZone.Id;
     }
 
     public override void Draw()
     {
-        DrawTimezoneSelector();
-
-        ImGui.SameLine();
-        if (ImGui.Button("Refresh"))
-            FetchVenues();
-
-        ImGui.SameLine();
-        if (ImGui.Button("Add Venue"))
-            addEditWindow.OpenAdd();
-
-        if (PopoutWindow != null)
-        {
-            ImGui.SameLine();
-            if (ImGui.Button(PopoutWindow.IsOpen ? "Hide Popout" : "Show Popout"))
-                PopoutWindow.IsOpen = !PopoutWindow.IsOpen;
-        }
-
+        DrawHeader();
         ImGui.Separator();
-
-        ImGui.SetNextItemWidth(300);
-        ImGui.InputTextWithHint("##venueSearch", "Search...", ref searchText, 256);
-
-        ImGui.SetNextItemWidth(-1);
-        ImGui.SliderInt("Lookahead", ref lookaheadHours, 0, 168, "%d h");
 
         if (isLoading)
         {
             ImGui.TextUnformatted("Loading venues...");
             return;
         }
-
         if (errorMessage != null)
         {
             ImGui.TextColored(new Vector4(1, 0.3f, 0.3f, 1), $"Error: {errorMessage}");
             return;
         }
-
         if (venues == null || (venues.Count == 0 && config.CustomVenues.Count == 0))
         {
             ImGui.TextUnformatted("No venues found.");
             return;
         }
 
-        DrawVenueTable();
+        // Reserve ~36px for the lookahead slider at the bottom
+        var avail = ImGui.GetContentRegionAvail();
+        var listHeight = Math.Max(50, avail.Y - 38);
+
+        if (ImGui.BeginChild("##VenueListContainer", new Vector2(0, listHeight)))
+        {
+            DrawVenueTable();
+        }
+        ImGui.EndChild();
+
+        DrawLookaheadSlider();
     }
 
-    private void DrawTimezoneSelector()
+    private void DrawHeader()
     {
-        ImGui.SetNextItemWidth(300);
+        // Search input (left)
+        ImGui.SetNextItemWidth(220);
+        if (ImGui.InputTextWithHint("##venueSearch", "Search... (T:tag)", ref searchText, 256))
+            cacheInvalidated = true;
 
-        var currentLabel = selectedTimezoneIndex == 0
-            ? $"System Default ({TimeZoneInfo.Local.DisplayName})"
-            : allTimeZones[selectedTimezoneIndex - 1].DisplayName;
+        ImGui.SameLine();
+        DrawWorldFilter();
 
-        if (ImGui.BeginCombo("Timezone", currentLabel))
+        ImGui.SameLine();
+        DrawDistrictFilter();
+
+        ImGui.SameLine();
+        ImGui.TextUnformatted("|");
+        ImGui.SameLine();
+
+        if (ImGui.Button("Refresh"))
+            FetchVenues();
+
+        ImGui.SameLine();
+        if (ImGui.Button("+"))
+            addEditWindow.OpenAdd();
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Add Venue");
+
+        if (PopoutWindow != null)
         {
-            if (ImGui.Selectable("System Default (" + TimeZoneInfo.Local.DisplayName + ")", selectedTimezoneIndex == 0))
+            ImGui.SameLine();
+            if (ImGui.Button(PopoutWindow.IsOpen ? "<-" : "->"))
+                PopoutWindow.IsOpen = !PopoutWindow.IsOpen;
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(PopoutWindow.IsOpen ? "Hide Popout" : "Show Popout");
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Settings"))
+            settingsWindow.IsOpen = !settingsWindow.IsOpen;
+
+        ImGui.SameLine();
+        var tzLabel = TimezoneRegistry.FormatLocal(displayTimeZone);
+        if (ImGui.Button($"TZ: {tzLabel}"))
+        {
+            timezonePicker.OpenPicker(entry =>
             {
-                selectedTimezoneIndex = 0;
-                displayTimeZone = TimeZoneInfo.Local;
-                config.SelectedTimezoneId = "";
+                displayTimeZone = entry.TimeZone;
+                cacheInvalidated = true;
+            });
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Choose display timezone");
+
+        ImGui.SameLine();
+        ImGui.TextUnformatted("|");
+        ImGui.SameLine();
+
+        // UTC + Local
+        var utc = DateTime.UtcNow;
+        var local = DateTime.Now;
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f),
+            $"UTC {utc:HH:mm} - Local {local:HH:mm}");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"UTC: {utc:yyyy-MM-dd HH:mm:ss}\nLocal: {local:yyyy-MM-dd HH:mm:ss zzz}");
+    }
+
+    private void DrawWorldFilter()
+    {
+        ImGui.SetNextItemWidth(180);
+        var label = string.IsNullOrEmpty(filterWorld) ? "World: any"
+            : filterWorld.StartsWith("DC:") ? $"DC: {filterWorld.Substring(3)}"
+            : filterWorld.StartsWith("World:") ? $"W: {filterWorld.Substring(6)}"
+            : filterWorld;
+
+        if (ImGui.BeginCombo("##worldFilter", label))
+        {
+            if (ImGui.Selectable("Any", string.IsNullOrEmpty(filterWorld)))
+            {
+                filterWorld = "";
+                config.FilterWorld = "";
                 config.Save();
                 cacheInvalidated = true;
             }
 
-            for (var i = 0; i < allTimeZones.Count; i++)
+            // Group by DC
+            var dcGroups = VenueResolver.WorldToDataCenter
+                .GroupBy(kv => kv.Value)
+                .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var dcGroup in dcGroups)
             {
-                var isSelected = selectedTimezoneIndex == i + 1;
-                if (ImGui.Selectable(allTimeZones[i].DisplayName, isSelected))
+                ImGui.Separator();
+                var dc = dcGroup.Key;
+                var dcSelected = filterWorld == $"DC:{dc}";
+                var dcColor = VenueResolver.DataCenterColors.TryGetValue(dc, out var cc) ? cc : new Vector4(1, 1, 1, 1);
+                ImGui.PushStyleColor(ImGuiCol.Text, dcColor);
+                if (ImGui.Selectable($"[DC] {dc}", dcSelected))
                 {
-                    selectedTimezoneIndex = i + 1;
-                    displayTimeZone = allTimeZones[i];
-                    config.SelectedTimezoneId = allTimeZones[i].Id;
+                    filterWorld = $"DC:{dc}";
+                    config.FilterWorld = filterWorld;
+                    config.Save();
+                    cacheInvalidated = true;
+                }
+                ImGui.PopStyleColor();
+
+                foreach (var kv in dcGroup.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    var w = kv.Key;
+                    var wSelected = filterWorld == $"World:{w}";
+                    ImGui.PushStyleColor(ImGuiCol.Text, dcColor with { W = 0.85f });
+                    if (ImGui.Selectable($"    {w}", wSelected))
+                    {
+                        filterWorld = $"World:{w}";
+                        config.FilterWorld = filterWorld;
+                        config.Save();
+                        cacheInvalidated = true;
+                    }
+                    ImGui.PopStyleColor();
+                }
+            }
+            ImGui.EndCombo();
+        }
+    }
+
+    private void DrawDistrictFilter()
+    {
+        ImGui.SetNextItemWidth(160);
+        var label = string.IsNullOrEmpty(filterDistrict) ? "District: any" : filterDistrict;
+        if (ImGui.BeginCombo("##districtFilter", label))
+        {
+            if (ImGui.Selectable("Any", string.IsNullOrEmpty(filterDistrict)))
+            {
+                filterDistrict = "";
+                config.FilterDistrict = "";
+                config.Save();
+                cacheInvalidated = true;
+            }
+            foreach (var d in availableDistricts)
+            {
+                if (ImGui.Selectable(d, filterDistrict == d))
+                {
+                    filterDistrict = d;
+                    config.FilterDistrict = d;
                     config.Save();
                     cacheInvalidated = true;
                 }
             }
-
             ImGui.EndCombo();
+        }
+    }
+
+    private void DrawLookaheadSlider()
+    {
+        ImGui.SetNextItemWidth(-100);
+        if (ImGui.SliderInt("##lookahead", ref lookaheadHours, -72, 168, $"%+d h  (-3d ... +7d)"))
+            cacheInvalidated = true;
+        ImGui.SameLine();
+        if (ImGui.Button("Now##lookaheadNow"))
+        {
+            lookaheadHours = 0;
+            cacheInvalidated = true;
         }
     }
 
@@ -944,20 +739,19 @@ public sealed class VenueFinderWindow : Window, IDisposable
             return;
 
         ImGui.TableSetupScrollFreeze(0, 1);
-        ImGui.TableSetupColumn("Region", ImGuiTableColumnFlags.WidthFixed, 45);
-        ImGui.TableSetupColumn("SFW", ImGuiTableColumnFlags.WidthFixed, 40);
-        ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthFixed, 200);
-        ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 110);
-        ImGui.TableSetupColumn("Remaining", ImGuiTableColumnFlags.WidthFixed, 70);
-        ImGui.TableSetupColumn("Timeline", ImGuiTableColumnFlags.WidthStretch | ImGuiTableColumnFlags.NoSort);
-        ImGui.TableSetupColumn("World", ImGuiTableColumnFlags.WidthFixed, 90);
-        ImGui.TableSetupColumn("District", ImGuiTableColumnFlags.WidthFixed, 120);
-        ImGui.TableSetupColumn("Ward", ImGuiTableColumnFlags.WidthFixed, 40);
-        ImGui.TableSetupColumn("Plot", ImGuiTableColumnFlags.WidthFixed, 40);
-        ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoSort, 45);
+        ImGui.TableSetupColumn("R", ImGuiTableColumnFlags.WidthFixed, 35);                        // 0
+        ImGui.TableSetupColumn("World", ImGuiTableColumnFlags.WidthFixed, 90);                    // 1
+        ImGui.TableSetupColumn("District", ImGuiTableColumnFlags.WidthFixed, 120);                // 2
+        ImGui.TableSetupColumn("Ward", ImGuiTableColumnFlags.WidthFixed, 40);                     // 3
+        ImGui.TableSetupColumn("Plot/Apt", ImGuiTableColumnFlags.WidthFixed, 50);                 // 4
+        ImGui.TableSetupColumn("SFW", ImGuiTableColumnFlags.WidthFixed, 50);                      // 5
+        ImGui.TableSetupColumn("*", ImGuiTableColumnFlags.WidthFixed, 28);                        // 6
+        ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthFixed, 220);                    // 7
+        ImGui.TableSetupColumn("Action", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoSort, 36); // 8
+        ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 110);                    // 9
+        ImGui.TableSetupColumn("Timebar", ImGuiTableColumnFlags.WidthStretch | ImGuiTableColumnFlags.NoSort); // 10
         ImGui.TableHeadersRow();
 
-        // Read sort specs
         var sortSpecs = ImGui.TableGetSortSpecs();
         if (sortSpecs.SpecsDirty)
         {
@@ -979,271 +773,234 @@ public sealed class VenueFinderWindow : Window, IDisposable
             RebuildCache(playerRegion);
 
         var rows = cachedRows!;
+        var appearance = config.Appearance;
 
-        // ImGuiListClipper: only draw visible rows
         var clipper = ImGui.ImGuiListClipper();
         clipper.Begin(rows.Count);
         while (clipper.Step())
         {
             for (var i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
             {
-                var row = rows[i];
-
-                ImGui.TableNextRow();
-
-                // Row background color
-                ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, ImGui.GetColorU32(row.BgColor));
-
-                // Region
-                ImGui.TableNextColumn();
-                var rowStartY = ImGui.GetCursorScreenPos().Y;
-                ImGui.TextColored(row.TextColor, row.Region);
-
-                // SFW
-                ImGui.TableNextColumn();
-                ImGui.TextColored(
-                    row.Venue.Sfw ? new Vector4(0.3f, 1, 0.3f, 1) : new Vector4(1, 0.3f, 0.3f, 1),
-                    row.Venue.Sfw ? "SFW" : "NSFW");
-
-                // Name (star + plain text)
-                ImGui.TableNextColumn();
-                var starColor = row.IsFavorite
-                    ? new Vector4(1f, 0.85f, 0f, 1f)
-                    : new Vector4(0.5f, 0.5f, 0.5f, 0.6f);
-                ImGui.PushStyleColor(ImGuiCol.Text, starColor);
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1, 1, 1, 0.1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1, 1, 1, 0.2f));
-                if (ImGui.SmallButton(row.FavId))
-                {
-                    if (row.IsFavorite)
-                        config.Favorites.Remove(row.Venue.Id);
-                    else
-                        config.Favorites.Add(row.Venue.Id);
-                    config.Save();
-                    cacheInvalidated = true;
-                }
-                ImGui.PopStyleColor(4);
-                ImGui.SameLine();
-                ImGui.TextColored(row.TextColor, row.Venue.Name);
-
-                // Time
-                ImGui.TableNextColumn();
-                ImGui.TextColored(row.TextColor, row.TimeDisplay);
-
-                // Remaining
-                ImGui.TableNextColumn();
-                ImGui.TextColored(row.TextColor, row.RemainingDisplay);
-
-                // Timeline (2 days: today left, tomorrow right)
-                ImGui.TableNextColumn();
-                {
-                    var cursorPos = ImGui.GetCursorScreenPos();
-                    var drawList = ImGui.GetWindowDrawList();
-                    var colWidth = ImGui.GetContentRegionAvail().X;
-                    var rowHeight = ImGui.GetTextLineHeight();
-
-                    if (row.IsOtherContinent)
-                    {
-                        drawList.AddText(cursorPos, ImGui.GetColorU32(new Vector4(0.5f, 0.5f, 0.5f, 0.6f)), "-");
-                        ImGui.Dummy(new Vector2(colWidth, rowHeight));
-                    }
-                    else
-                    {
-                        // Background
-                        drawList.AddRectFilled(
-                            cursorPos,
-                            new Vector2(cursorPos.X + colWidth, cursorPos.Y + rowHeight),
-                            ImGui.GetColorU32(new Vector4(0.1f, 0.1f, 0.1f, 0.5f)));
-
-                        // Hour markers and day separators, shifted by lookahead
-                        for (var h = lookaheadHours; h < lookaheadHours + 48; h++)
-                        {
-                            var frac = (h - lookaheadHours) / 48f;
-                            var x = cursorPos.X + frac * colWidth;
-                            if (h % 24 == 0)
-                            {
-                                // Day separator (white, thick)
-                                drawList.AddLine(
-                                    new Vector2(x, cursorPos.Y),
-                                    new Vector2(x, cursorPos.Y + rowHeight),
-                                    ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.9f)),
-                                    2f);
-                            }
-                            else if (h % 6 == 0)
-                            {
-                                drawList.AddLine(
-                                    new Vector2(x, cursorPos.Y),
-                                    new Vector2(x, cursorPos.Y + rowHeight),
-                                    ImGui.GetColorU32(new Vector4(0.5f, 0.5f, 0.5f, 0.6f)));
-                            }
-                            else
-                            {
-                                drawList.AddLine(
-                                    new Vector2(x, cursorPos.Y),
-                                    new Vector2(x, cursorPos.Y + rowHeight),
-                                    ImGui.GetColorU32(new Vector4(0.3f, 0.3f, 0.3f, 0.4f)));
-                            }
-                        }
-
-                        if (row.HasTimelineBar)
-                        {
-                            // Schedule bar on the 48h timeline
-                            var isActive = IsVenueActiveNow(row.Venue);
-                            var barColor = isActive
-                                ? ImGui.GetColorU32(new Vector4(0.2f, 0.8f, 0.2f, 0.8f))
-                                : ImGui.GetColorU32(new Vector4(0.9f, 0.65f, 0.1f, 0.7f));
-                            var barX1 = cursorPos.X + row.TimelineStartFrac * colWidth;
-                            var barX2 = cursorPos.X + row.TimelineEndFrac * colWidth;
-                            drawList.AddRectFilled(
-                                new Vector2(barX1, cursorPos.Y + 1),
-                                new Vector2(barX2, cursorPos.Y + rowHeight - 1),
-                                barColor);
-                        }
-
-                        // Current time marker (yellow), shifted by lookahead
-                        var estNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, displayTimeZone);
-                        var nowFrac = (float)((estNow.TimeOfDay.TotalHours - lookaheadHours) / 48.0);
-                        if (nowFrac is >= 0 and <= 1)
-                        {
-                            var nowX = cursorPos.X + nowFrac * colWidth;
-                            drawList.AddLine(
-                                new Vector2(nowX, cursorPos.Y),
-                                new Vector2(nowX, cursorPos.Y + rowHeight),
-                                ImGui.GetColorU32(new Vector4(1f, 1f, 0f, 0.9f)),
-                                2f);
-                        }
-
-                        ImGui.Dummy(new Vector2(colWidth, rowHeight));
-                    }
-                }
-
-                // World
-                ImGui.TableNextColumn();
-                ImGui.TextColored(row.TextColor, row.Venue.Location.World);
-
-                // District
-                ImGui.TableNextColumn();
-                ImGui.TextColored(row.TextColor, row.Venue.Location.District);
-
-                // Ward
-                ImGui.TableNextColumn();
-                ImGui.TextColored(row.TextColor, row.WardStr);
-
-                // Plot
-                ImGui.TableNextColumn();
-                if (row.IsApartment)
-                    ImGui.TableSetBgColor(ImGuiTableBgTarget.CellBg, ImGui.GetColorU32(new Vector4(0.1f, 0.15f, 0.35f, 1.0f)));
-                ImGui.TextColored(row.TextColor, row.PlotStr);
-
-                // Actions (Go only)
-                ImGui.TableNextColumn();
-                if (!row.IsOtherContinent && ImGui.SmallButton(row.GoId))
-                {
-                    var cmd = BuildLifestreamCommand(row.Venue.Location);
-                    Plugin.Log.Information($"Jumping to venue: {cmd}");
-                    Plugin.SendChatCommand(cmd);
-                }
-
-                // Right-click context menu (positional hover for full row)
-                var rowH = ImGui.GetTextLineHeightWithSpacing();
-                var mousePos = ImGui.GetMousePos();
-                if (ImGui.IsWindowHovered() && mousePos.Y >= rowStartY && mousePos.Y < rowStartY + rowH
-                    && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
-                {
-                    contextMenuVenue = row.Venue;
-                    ImGui.OpenPopup("VenueContextMenu");
-                }
+                DrawRow(rows[i], appearance);
             }
         }
         clipper.End();
         clipper.Destroy();
 
-        // Context menu popup (before EndTable)
-        if (ImGui.BeginPopup("VenueContextMenu"))
-        {
-            if (contextMenuVenue != null)
-            {
-                var cv = contextMenuVenue;
-                var isCv = IsCustomVenue(cv);
-
-                if (!isCv && ImGui.MenuItem($"Open Venue Page ({cv.Name})"))
-                {
-                    Dalamud.Utility.Util.OpenLink($"https://ffxivvenues.com/venue/{cv.Id}");
-                }
-
-                if (ImGui.MenuItem($"Travel to {cv.Name}"))
-                {
-                    var cmd = BuildLifestreamCommand(cv.Location);
-                    Plugin.Log.Information($"Jumping to venue: {cmd}");
-                    Plugin.SendChatCommand(cmd);
-                }
-
-                if (ImGui.MenuItem($"Copy Lifestream command ({cv.Name})"))
-                {
-                    ImGui.SetClipboardText(BuildLifestreamCommand(cv.Location));
-                }
-
-                ImGui.Separator();
-
-                if (config.Blacklist.Contains(cv.Id))
-                {
-                    if (ImGui.MenuItem($"Remove from Blacklist ({cv.Name})"))
-                    {
-                        config.Blacklist.Remove(cv.Id);
-                        config.Save();
-                        cacheInvalidated = true;
-                    }
-                }
-                else
-                {
-                    if (ImGui.MenuItem($"Blacklist ({cv.Name})"))
-                    {
-                        pendingBlacklistId = cv.Id;
-                        openBlacklistConfirm = true;
-                        ImGui.CloseCurrentPopup();
-                    }
-                }
-
-                ImGui.Separator();
-                if (isCv)
-                {
-                    if (ImGui.MenuItem($"Edit ({cv.Name})"))
-                    {
-                        var customVenue = config.CustomVenues.FirstOrDefault(c => c.Id.ToString() == cv.Id);
-                        if (customVenue != null)
-                            addEditWindow.OpenEdit(customVenue);
-                    }
-                }
-                else
-                {
-                    if (ImGui.MenuItem($"Edit ({cv.Name})"))
-                    {
-                        addEditWindow.OpenEditApi(cv.Id, cv);
-                    }
-                    if (config.VenueOverrides.ContainsKey(cv.Id))
-                    {
-                        if (ImGui.MenuItem($"Reset Override ({cv.Name})"))
-                        {
-                            config.VenueOverrides.Remove(cv.Id);
-                            config.Save();
-                            cacheInvalidated = true;
-                        }
-                    }
-                }
-            }
-            ImGui.EndPopup();
-        }
+        DrawContextMenu();
 
         ImGui.EndTable();
 
-        // Blacklist confirmation modal (after EndTable)
+        DrawBlacklistConfirm();
+    }
+
+    private void DrawRow(VenueRow row, AppearanceSettings appearance)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, ImGui.GetColorU32(row.BgColor));
+        var rowStartY = ImGui.GetCursorScreenPos().Y;
+
+        // 0: R
+        ImGui.TableNextColumn();
+        ImGui.TextColored(row.TextColor, row.Region);
+
+        // 1: World
+        ImGui.TableNextColumn();
+        ImGui.TextColored(row.TextColor, row.Venue.Location.World);
+
+        // 2: District
+        ImGui.TableNextColumn();
+        ImGui.TextColored(row.TextColor, row.Venue.Location.District);
+
+        // 3: Ward
+        ImGui.TableNextColumn();
+        ImGui.TextColored(row.TextColor, row.WardStr);
+
+        // 4: Plot/Apt
+        ImGui.TableNextColumn();
+        if (row.IsApartment)
+            ImGui.TableSetBgColor(ImGuiTableBgTarget.CellBg, ImGui.GetColorU32(appearance.ApartmentCellBgColor));
+        ImGui.TextColored(row.TextColor, row.PlotStr);
+
+        // 5: SFW
+        ImGui.TableNextColumn();
+        ImGui.TextColored(
+            row.Venue.Sfw ? appearance.SfwColor : appearance.NsfwColor,
+            row.Venue.Sfw ? "SFW" : "NSFW");
+
+        // 6: Favorite
+        ImGui.TableNextColumn();
+        if (row.IsFavorite)
+            ImGui.TableSetBgColor(ImGuiTableBgTarget.CellBg, ImGui.GetColorU32(appearance.FavoriteBgColor));
+        var favColor = row.IsFavorite ? appearance.FavoriteIconColor : appearance.FavoriteInactiveColor;
+        ImGui.PushStyleColor(ImGuiCol.Text, favColor);
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1, 1, 1, 0.1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1, 1, 1, 0.2f));
+        if (ImGui.SmallButton($"*##fav{row.Venue.Id}"))
+        {
+            if (row.IsFavorite) config.Favorites.Remove(row.Venue.Id);
+            else config.Favorites.Add(row.Venue.Id);
+            config.Save();
+            cacheInvalidated = true;
+        }
+        ImGui.PopStyleColor(4);
+
+        // 7: Name (with double-click)
+        ImGui.TableNextColumn();
+        ImGui.PushStyleColor(ImGuiCol.Text, row.TextColor);
+        ImGui.Selectable($"{row.Venue.Name}##nm{row.Venue.Id}", false, ImGuiSelectableFlags.AllowDoubleClick);
+        ImGui.PopStyleColor();
+        if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            DispatchAction(row.Venue, config.DoubleClickAction);
+
+        // 8: Action (Go arrow)
+        ImGui.TableNextColumn();
+        if (!row.IsOtherContinent)
+        {
+            if (ImGui.SmallButton($"->##go{row.Venue.Id}"))
+            {
+                DispatchAction(row.Venue, DoubleClickAction.LifestreamGoto);
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Travel via Lifestream");
+        }
+
+        // 9: Time
+        ImGui.TableNextColumn();
+        ImGui.TextColored(row.TextColor, $"{row.TimeDisplay}  ({row.RemainingDisplay})");
+
+        // 10: Timebar
+        ImGui.TableNextColumn();
+        DrawTimelineCell(row, appearance);
+
+        // Right-click context menu (positional hover for full row)
+        var rowH = ImGui.GetTextLineHeightWithSpacing();
+        var mousePos = ImGui.GetMousePos();
+        if (ImGui.IsWindowHovered() && mousePos.Y >= rowStartY && mousePos.Y < rowStartY + rowH
+            && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            contextMenuVenue = row.Venue;
+            ImGui.OpenPopup("VenueContextMenu");
+        }
+    }
+
+    private void DrawTimelineCell(VenueRow row, AppearanceSettings appearance)
+    {
+        var cursorPos = ImGui.GetCursorScreenPos();
+        var drawList = ImGui.GetWindowDrawList();
+        var colWidth = ImGui.GetContentRegionAvail().X;
+        var rowHeight = ImGui.GetTextLineHeight() * appearance.BarHeightScale;
+
+        if (row.IsOtherContinent)
+        {
+            drawList.AddText(cursorPos, ImGui.GetColorU32(appearance.OtherContinentTextColor), "-");
+            ImGui.Dummy(new Vector2(colWidth, rowHeight));
+            return;
+        }
+
+        // Background
+        drawList.AddRectFilled(
+            cursorPos,
+            new Vector2(cursorPos.X + colWidth, cursorPos.Y + rowHeight),
+            ImGui.GetColorU32(appearance.TimelineBgColor));
+
+        // Hour markers / day separators (computed in displayTimeZone).
+        // For each integer hour in [0..48], compute the absolute UTC time and check the local hour.
+        var windowStartUtc = cachedWindowStartUtc;
+        for (var h = 0; h <= (int)TimelineHours; h++)
+        {
+            var frac = h / (float)TimelineHours;
+            var x = cursorPos.X + frac * colWidth;
+            var atUtc = windowStartUtc + TimeSpan.FromHours(h);
+            var atLocal = TimeZoneInfo.ConvertTime(atUtc, displayTimeZone);
+            var localHour = atLocal.Hour;
+
+            uint color;
+            float thickness;
+            if (localHour == 0)
+            {
+                color = ImGui.GetColorU32(appearance.MidnightLineColor);
+                thickness = appearance.MidnightLineThickness * appearance.LineThicknessScale;
+            }
+            else if (localHour % 6 == 0)
+            {
+                color = ImGui.GetColorU32(appearance.SixHourLineColor);
+                thickness = 1f * appearance.LineThicknessScale;
+            }
+            else
+            {
+                color = ImGui.GetColorU32(appearance.HourLineColor);
+                thickness = 1f * appearance.LineThicknessScale;
+            }
+            drawList.AddLine(
+                new Vector2(x, cursorPos.Y),
+                new Vector2(x, cursorPos.Y + rowHeight),
+                color, thickness);
+        }
+
+        // Slot bars
+        var windowEndUtc = windowStartUtc + TimeSpan.FromHours(TimelineHours);
+        foreach (var slot in row.Slots)
+        {
+            if (slot.EndUtc <= windowStartUtc || slot.StartUtc >= windowEndUtc)
+                continue;
+            var startFrac = (float)Math.Clamp((slot.StartUtc - windowStartUtc).TotalHours / TimelineHours, 0, 1);
+            var endFrac = (float)Math.Clamp((slot.EndUtc - windowStartUtc).TotalHours / TimelineHours, 0, 1);
+            if (endFrac - startFrac < 0.001f) continue;
+
+            Vector4 col;
+            if (slot.AlwaysOpen) col = appearance.AlwaysOpenBarColor;
+            else if (slot.IsActive) col = appearance.ActiveBarColor;
+            else col = appearance.InactiveBarColor;
+
+            var x1 = cursorPos.X + startFrac * colWidth;
+            var x2 = cursorPos.X + endFrac * colWidth;
+            drawList.AddRectFilled(
+                new Vector2(x1, cursorPos.Y + 1),
+                new Vector2(x2, cursorPos.Y + rowHeight - 1),
+                ImGui.GetColorU32(col));
+        }
+
+        // Current time marker (green)
+        var nowUtc = DateTimeOffset.UtcNow;
+        var nowFrac = (float)((nowUtc - windowStartUtc).TotalHours / TimelineHours);
+        if (nowFrac >= 0 && nowFrac <= 1)
+        {
+            var nowX = cursorPos.X + nowFrac * colWidth;
+            drawList.AddLine(
+                new Vector2(nowX, cursorPos.Y),
+                new Vector2(nowX, cursorPos.Y + rowHeight),
+                ImGui.GetColorU32(appearance.CurrentTimeLineColor),
+                appearance.CurrentTimeLineThickness * appearance.LineThicknessScale);
+        }
+
+        ImGui.Dummy(new Vector2(colWidth, rowHeight));
+    }
+
+    private void DrawContextMenu()
+    {
+        if (!ImGui.BeginPopup("VenueContextMenu")) return;
+        if (contextMenuVenue != null)
+        {
+            var builder = new ContextMenuBuilder(config, addEditWindow,
+                () => cacheInvalidated = true,
+                DispatchAction);
+            if (builder.Draw(contextMenuVenue, out var blacklistId) && blacklistId != null)
+            {
+                pendingBlacklistId = blacklistId;
+                openBlacklistConfirm = true;
+            }
+        }
+        ImGui.EndPopup();
+    }
+
+    private void DrawBlacklistConfirm()
+    {
         if (openBlacklistConfirm)
         {
             ImGui.OpenPopup("ConfirmBlacklist");
             openBlacklistConfirm = false;
         }
-
         var confirmOpen = true;
         if (ImGui.BeginPopupModal("ConfirmBlacklist", ref confirmOpen, ImGuiWindowFlags.AlwaysAutoResize))
         {

@@ -5,9 +5,10 @@ using System.Net.Http;
 using System.Numerics;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Dalamud.Interface.Windowing;
-using Dalamud.Bindings.ImGui;
 using ActiveVenueFinder.Models;
+using ActiveVenueFinder.Services;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Windowing;
 
 namespace ActiveVenueFinder.Windows;
 
@@ -24,6 +25,8 @@ public sealed class PopoutWindow : Window, IDisposable
     private const long FetchIntervalMs = 15 * 60 * 1000;
 
     private Venue? contextMenuVenue;
+    private string? pendingBlacklistId;
+    private bool openBlacklistConfirm;
 
     public PopoutWindow(Config config, VenueFinderWindow mainWindow, AddEditVenueWindow addEditWindow)
         : base("##PopoutVenueFinder",
@@ -83,45 +86,14 @@ public sealed class PopoutWindow : Window, IDisposable
         });
     }
 
-    private List<Venue> BuildVenueList()
+    private List<Venue> BuildVenueList() => VenueResolver.BuildAll(venues, config);
+
+    private static string FormatRemaining(List<TimeSlot> slots)
     {
-        var allVenues = new List<Venue>();
-        if (venues != null)
-        {
-            foreach (var v in venues)
-            {
-                allVenues.Add(config.VenueOverrides.TryGetValue(v.Id, out var ov)
-                    ? mainWindow.ApplyOverride(v, ov)
-                    : v);
-            }
-        }
-
-        foreach (var cv in config.CustomVenues)
-            allVenues.Add(mainWindow.CustomToVenue(cv));
-
-        return allVenues;
-    }
-
-    private static DateTimeOffset GetOpeningTime(Venue venue)
-    {
-        string? startIso = null;
-        if (venue.ScheduleOverrides.Count > 0)
-        {
-            var active = venue.ScheduleOverrides.FirstOrDefault(o => o.Open && o.IsNow);
-            if (active != null)
-                startIso = active.Start;
-        }
-
-        if (string.IsNullOrEmpty(startIso) && venue.Resolution is { IsNow: true })
-            startIso = venue.Resolution.Start;
-
-        if (!string.IsNullOrEmpty(startIso))
-        {
-            try { return DateTimeOffset.Parse(startIso); }
-            catch { }
-        }
-
-        return DateTimeOffset.MinValue;
+        var (rem, alwaysOpen) = TimelineCalculator.GetRemainingFromActive(slots);
+        if (alwaysOpen) return "Always";
+        if (rem <= TimeSpan.Zero) return "--:--";
+        return $"{(int)rem.TotalHours:D2}:{rem.Minutes:D2}";
     }
 
     public override void Draw()
@@ -139,21 +111,27 @@ public sealed class PopoutWindow : Window, IDisposable
             return;
 
         var allVenues = BuildVenueList();
+        var nowUtc = DateTimeOffset.UtcNow;
+        var windowStart = nowUtc - TimeSpan.FromHours(1);
+        var windowEnd = nowUtc + TimeSpan.FromDays(1);
 
-        var activeVenues = allVenues
-            .Where(v => VenueFinderWindow.IsVenueActiveNow(v) && !config.Blacklist.Contains(v.Id))
+        var entries = new List<(Venue venue, List<TimeSlot> slots, DateTimeOffset openedAt)>();
+        foreach (var v in allVenues)
+        {
+            if (config.Blacklist.Contains(v.Id)) continue;
+            var slots = TimelineCalculator.GetSlotsInWindow(v, windowStart, windowEnd);
+            var active = TimelineCalculator.GetActiveSlot(slots);
+            if (!active.HasValue) continue;
+            entries.Add((v, slots, active.Value.StartUtc));
+        }
+
+        var favorites = entries.Where(e => config.Favorites.Contains(e.venue.Id)).ToList();
+        var nonFavorites = entries.Where(e => !config.Favorites.Contains(e.venue.Id))
+            .OrderByDescending(e => e.openedAt)
+            .Take(3)
             .ToList();
 
-        var favorites = activeVenues.Where(v => config.Favorites.Contains(v.Id)).ToList();
-        var nonFavorites = activeVenues.Where(v => !config.Favorites.Contains(v.Id)).ToList();
-
-        nonFavorites.Sort((a, b) => GetOpeningTime(b).CompareTo(GetOpeningTime(a)));
-
-        var topNonFavorites = nonFavorites.Take(3).ToList();
-
-        var displayList = new List<Venue>();
-        displayList.AddRange(favorites);
-        displayList.AddRange(topNonFavorites);
+        var displayList = favorites.Concat(nonFavorites).ToList();
 
         if (displayList.Count == 0)
         {
@@ -161,29 +139,25 @@ public sealed class PopoutWindow : Window, IDisposable
             return;
         }
 
-        for (var i = 0; i < displayList.Count; i++)
+        foreach (var entry in displayList)
         {
-            var venue = displayList[i];
+            var venue = entry.venue;
             var isFav = config.Favorites.Contains(venue.Id);
-            var remaining = VenueFinderWindow.FormatRemainingTime(venue);
+            var remaining = FormatRemaining(entry.slots);
 
-            var color = VenueFinderWindow.DataCenterColors.TryGetValue(venue.Location.DataCenter, out var c)
+            var color = VenueResolver.DataCenterColors.TryGetValue(venue.Location.DataCenter, out var c)
                 ? c
                 : new Vector4(1, 1, 1, 1);
 
-            var prefix = isFav ? "\u2605 " : "  ";
+            var prefix = isFav ? "* " : "  ";
             var label = $"{prefix}{venue.Name} ({remaining})##{venue.Id}_popout";
 
             ImGui.PushStyleColor(ImGuiCol.Text, color);
-            ImGui.Selectable(label);
+            ImGui.Selectable(label, false, ImGuiSelectableFlags.AllowDoubleClick);
             ImGui.PopStyleColor();
 
             if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
-            {
-                var cmd = VenueFinderWindow.BuildLifestreamCommand(venue.Location);
-                Plugin.Log.Information($"Popout travel: {cmd}");
-                Plugin.SendChatCommand(cmd);
-            }
+                mainWindow.DispatchAction(venue, config.DoubleClickAction);
 
             if (ImGui.IsItemHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
             {
@@ -193,83 +167,54 @@ public sealed class PopoutWindow : Window, IDisposable
         }
 
         DrawContextMenu();
+        DrawBlacklistConfirm();
     }
 
     private void DrawContextMenu()
     {
-        if (!ImGui.BeginPopup("PopoutContextMenu"))
-            return;
-
+        if (!ImGui.BeginPopup("PopoutContextMenu")) return;
         if (contextMenuVenue != null)
         {
-            var cv = contextMenuVenue;
-            var isCv = VenueFinderWindow.IsCustomVenue(cv);
-
-            if (!isCv && ImGui.MenuItem($"Open Venue Page ({cv.Name})"))
+            var builder = new ContextMenuBuilder(config, addEditWindow,
+                () => { /* popout has no cache */ },
+                mainWindow.DispatchAction);
+            if (builder.Draw(contextMenuVenue, out var blacklistId) && blacklistId != null)
             {
-                Dalamud.Utility.Util.OpenLink($"https://ffxivvenues.com/venue/{cv.Id}");
-            }
-
-            if (ImGui.MenuItem($"Travel to {cv.Name}"))
-            {
-                var cmd = VenueFinderWindow.BuildLifestreamCommand(cv.Location);
-                Plugin.Log.Information($"Popout travel: {cmd}");
-                Plugin.SendChatCommand(cmd);
-            }
-
-            if (ImGui.MenuItem($"Copy Lifestream command ({cv.Name})"))
-            {
-                ImGui.SetClipboardText(VenueFinderWindow.BuildLifestreamCommand(cv.Location));
-            }
-
-            ImGui.Separator();
-
-            if (config.Blacklist.Contains(cv.Id))
-            {
-                if (ImGui.MenuItem($"Remove from Blacklist ({cv.Name})"))
-                {
-                    config.Blacklist.Remove(cv.Id);
-                    config.Save();
-                }
-            }
-            else
-            {
-                if (ImGui.MenuItem($"Blacklist ({cv.Name})"))
-                {
-                    config.Blacklist.Add(cv.Id);
-                    config.Save();
-                }
-            }
-
-            ImGui.Separator();
-
-            if (isCv)
-            {
-                if (ImGui.MenuItem($"Edit ({cv.Name})"))
-                {
-                    var customVenue = config.CustomVenues.FirstOrDefault(c => c.Id.ToString() == cv.Id);
-                    if (customVenue != null)
-                        addEditWindow.OpenEdit(customVenue);
-                }
-            }
-            else
-            {
-                if (ImGui.MenuItem($"Edit ({cv.Name})"))
-                {
-                    addEditWindow.OpenEditApi(cv.Id, cv);
-                }
-
-                if (config.VenueOverrides.ContainsKey(cv.Id))
-                {
-                    if (ImGui.MenuItem($"Reset Override ({cv.Name})"))
-                    {
-                        config.VenueOverrides.Remove(cv.Id);
-                        config.Save();
-                    }
-                }
+                pendingBlacklistId = blacklistId;
+                openBlacklistConfirm = true;
             }
         }
-
         ImGui.EndPopup();
+    }
+
+    private void DrawBlacklistConfirm()
+    {
+        if (openBlacklistConfirm)
+        {
+            ImGui.OpenPopup("PopoutConfirmBlacklist");
+            openBlacklistConfirm = false;
+        }
+        var confirmOpen = true;
+        if (ImGui.BeginPopupModal("PopoutConfirmBlacklist", ref confirmOpen, ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.TextUnformatted("Venue wirklich blacklisten?");
+            if (ImGui.Button("Ja"))
+            {
+                if (pendingBlacklistId != null)
+                {
+                    config.Blacklist.Add(pendingBlacklistId);
+                    config.Save();
+                }
+                pendingBlacklistId = null;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Nein"))
+            {
+                pendingBlacklistId = null;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
+        }
     }
 }

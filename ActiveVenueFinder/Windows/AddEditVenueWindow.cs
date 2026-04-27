@@ -2,15 +2,17 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using Dalamud.Interface.Windowing;
-using Dalamud.Bindings.ImGui;
 using ActiveVenueFinder.Models;
+using ActiveVenueFinder.Services;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Windowing;
 
 namespace ActiveVenueFinder.Windows;
 
 public sealed class AddEditVenueWindow : Window
 {
     private readonly Config config;
+    private readonly TimezonePickerWindow timezonePicker;
 
     private enum EditMode { AddCustom, EditCustom, EditApi }
     private EditMode editMode;
@@ -26,41 +28,42 @@ public sealed class AddEditVenueWindow : Window
     private bool hasApartment;
     private bool subdivision;
     private bool sfw = true;
-    private int selectedTimezoneIndex;
+    private string timezoneId = "America/New_York";
     private HashSet<string> selectedTags = new();
     private string newTagInput = "";
 
     public Action? OnSaved { get; set; }
 
-    private static readonly (string Label, string Id)[] TimezoneOptions =
-    {
-        ("EST", "America/New_York"),
-        ("CST", "America/Chicago"),
-        ("MST", "America/Denver"),
-        ("PST", "America/Los_Angeles"),
-    };
-
     private static readonly string[] DayNames =
         { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
 
-    private readonly bool[] scheduleActive = new bool[7];
-    private readonly int[] scheduleStartHour = new int[7];
-    private readonly int[] scheduleStartMinute = new int[7];
-    private readonly int[] scheduleEndHour = new int[7];
-    private readonly int[] scheduleEndMinute = new int[7];
-    private readonly bool[] scheduleNextDay = new bool[7];
+    // Multi-slot per day: List of slots per day-of-week
+    private readonly List<List<EditableSlot>> daySlots = new();
 
-    public AddEditVenueWindow(Config config)
+    private sealed class EditableSlot
+    {
+        public int StartHour;
+        public int StartMinute;
+        public int EndHour;
+        public int EndMinute;
+        public bool NextDay;
+    }
+
+    public AddEditVenueWindow(Config config, TimezonePickerWindow timezonePicker)
         : base("Add Venue###AddEditVenue")
     {
         this.config = config;
+        this.timezonePicker = timezonePicker;
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(400, 300),
-            MaximumSize = new Vector2(600, 800),
+            MinimumSize = new Vector2(450, 350),
+            MaximumSize = new Vector2(700, 1000),
         };
-        Size = new Vector2(500, 600);
+        Size = new Vector2(560, 700);
         SizeCondition = ImGuiCond.FirstUseEver;
+
+        for (var i = 0; i < 7; i++)
+            daySlots.Add(new List<EditableSlot>());
     }
 
     public void OpenAdd()
@@ -106,8 +109,7 @@ public sealed class AddEditVenueWindow : Window
         apartment = cv.Apartment ?? 0;
         subdivision = cv.Subdivision;
         sfw = cv.Sfw;
-
-        selectedTimezoneIndex = FindTimezoneIndex(cv.TimezoneId);
+        timezoneId = cv.TimezoneId;
         selectedTags = new HashSet<string>(cv.Tags);
         LoadSchedules(cv.Schedules);
     }
@@ -123,8 +125,7 @@ public sealed class AddEditVenueWindow : Window
         apartment = ov.Apartment ?? 0;
         subdivision = ov.Subdivision;
         sfw = ov.Sfw;
-
-        selectedTimezoneIndex = FindTimezoneIndex(ov.TimezoneId);
+        timezoneId = ov.TimezoneId;
         selectedTags = new HashSet<string>(ov.Tags);
         LoadSchedules(ov.Schedules);
     }
@@ -140,20 +141,9 @@ public sealed class AddEditVenueWindow : Window
         apartment = venue.Location.Apartment ?? 0;
         subdivision = venue.Location.Subdivision;
         sfw = venue.Sfw;
-
-        selectedTimezoneIndex = 0;
+        timezoneId = "America/New_York";
         selectedTags = new HashSet<string>();
         ResetSchedules();
-    }
-
-    private static int FindTimezoneIndex(string timezoneId)
-    {
-        for (var i = 0; i < TimezoneOptions.Length; i++)
-        {
-            if (TimezoneOptions[i].Id == timezoneId)
-                return i;
-        }
-        return 0;
     }
 
     private void LoadSchedules(List<CustomVenueSchedule> schedules)
@@ -162,26 +152,21 @@ public sealed class AddEditVenueWindow : Window
         foreach (var s in schedules)
         {
             var idx = (int)s.Day;
-            scheduleActive[idx] = true;
-            scheduleStartHour[idx] = s.StartHour;
-            scheduleStartMinute[idx] = s.StartMinute;
-            scheduleEndHour[idx] = s.EndHour;
-            scheduleEndMinute[idx] = s.EndMinute;
-            scheduleNextDay[idx] = s.NextDay;
+            daySlots[idx].Add(new EditableSlot
+            {
+                StartHour = s.StartHour,
+                StartMinute = s.StartMinute,
+                EndHour = s.EndHour,
+                EndMinute = s.EndMinute,
+                NextDay = s.NextDay,
+            });
         }
     }
 
     private void ResetSchedules()
     {
         for (var i = 0; i < 7; i++)
-        {
-            scheduleActive[i] = false;
-            scheduleStartHour[i] = 20;
-            scheduleStartMinute[i] = 0;
-            scheduleEndHour[i] = 23;
-            scheduleEndMinute[i] = 0;
-            scheduleNextDay[i] = false;
-        }
+            daySlots[i].Clear();
     }
 
     private void ResetFields()
@@ -195,7 +180,7 @@ public sealed class AddEditVenueWindow : Window
         hasApartment = false;
         subdivision = false;
         sfw = true;
-        selectedTimezoneIndex = 0;
+        timezoneId = "America/New_York";
         selectedTags = new HashSet<string>();
         newTagInput = "";
         ResetSchedules();
@@ -218,21 +203,20 @@ public sealed class AddEditVenueWindow : Window
         ImGui.Checkbox("Subdivision", ref subdivision);
         ImGui.Checkbox("SFW", ref sfw);
 
-        ImGui.SetNextItemWidth(150);
-        if (ImGui.BeginCombo("Timezone", TimezoneOptions[selectedTimezoneIndex].Label))
+        // Timezone via picker
+        var entry = TimezoneRegistry.FindById(timezoneId);
+        var label = entry?.DisplayLabel ?? timezoneId;
+        ImGui.SetNextItemWidth(280);
+        if (ImGui.Button($"TZ: {label}##editTzBtn"))
         {
-            for (var i = 0; i < TimezoneOptions.Length; i++)
-            {
-                if (ImGui.Selectable(TimezoneOptions[i].Label, selectedTimezoneIndex == i))
-                    selectedTimezoneIndex = i;
-            }
-            ImGui.EndCombo();
+            timezonePicker.OpenPicker(e => timezoneId = e.Id);
         }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Select schedule timezone");
 
         ImGui.Separator();
         ImGui.TextUnformatted("Tags");
 
-        foreach (var tag in VenueFinderWindow.PredefinedTags)
+        foreach (var tag in VenueResolver.PredefinedTags)
         {
             var isSet = selectedTags.Contains(tag);
             if (ImGui.Checkbox(tag + "##tag", ref isSet))
@@ -263,7 +247,7 @@ public sealed class AddEditVenueWindow : Window
         if (ImGui.Button("Add Tag") && !string.IsNullOrWhiteSpace(newTagInput))
         {
             var tagName = newTagInput.Trim();
-            if (!VenueFinderWindow.PredefinedTags.Contains(tagName) && !config.CustomTags.Contains(tagName))
+            if (!VenueResolver.PredefinedTags.Contains(tagName) && !config.CustomTags.Contains(tagName))
             {
                 config.CustomTags.Add(tagName);
                 config.Save();
@@ -273,38 +257,52 @@ public sealed class AddEditVenueWindow : Window
         }
 
         ImGui.Separator();
-        ImGui.TextUnformatted("Schedule");
+        ImGui.TextUnformatted("Schedule (multiple slots per day allowed)");
 
         for (var i = 0; i < 7; i++)
         {
             ImGui.PushID(i);
-            ImGui.Checkbox(DayNames[i], ref scheduleActive[i]);
-            if (scheduleActive[i])
+            ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), DayNames[i]);
+            ImGui.SameLine();
+            if (ImGui.SmallButton("+ slot"))
             {
-                ImGui.SameLine();
+                daySlots[i].Add(new EditableSlot
+                {
+                    StartHour = 20, StartMinute = 0,
+                    EndHour = 23, EndMinute = 0,
+                    NextDay = false,
+                });
+            }
+
+            for (var j = 0; j < daySlots[i].Count; j++)
+            {
+                ImGui.PushID(j);
+                var slot = daySlots[i][j];
                 ImGui.SetNextItemWidth(40);
-                ImGui.InputInt("##sh", ref scheduleStartHour[i]);
-                scheduleStartHour[i] = Math.Clamp(scheduleStartHour[i], 0, 23);
-                ImGui.SameLine();
-                ImGui.TextUnformatted(":");
-                ImGui.SameLine();
+                ImGui.InputInt("##sh", ref slot.StartHour);
+                slot.StartHour = Math.Clamp(slot.StartHour, 0, 23);
+                ImGui.SameLine(); ImGui.TextUnformatted(":"); ImGui.SameLine();
                 ImGui.SetNextItemWidth(40);
-                ImGui.InputInt("##sm", ref scheduleStartMinute[i]);
-                scheduleStartMinute[i] = Math.Clamp(scheduleStartMinute[i], 0, 59);
-                ImGui.SameLine();
-                ImGui.TextUnformatted("-");
-                ImGui.SameLine();
+                ImGui.InputInt("##sm", ref slot.StartMinute);
+                slot.StartMinute = Math.Clamp(slot.StartMinute, 0, 59);
+                ImGui.SameLine(); ImGui.TextUnformatted("-"); ImGui.SameLine();
                 ImGui.SetNextItemWidth(40);
-                ImGui.InputInt("##eh", ref scheduleEndHour[i]);
-                scheduleEndHour[i] = Math.Clamp(scheduleEndHour[i], 0, 23);
-                ImGui.SameLine();
-                ImGui.TextUnformatted(":");
-                ImGui.SameLine();
+                ImGui.InputInt("##eh", ref slot.EndHour);
+                slot.EndHour = Math.Clamp(slot.EndHour, 0, 23);
+                ImGui.SameLine(); ImGui.TextUnformatted(":"); ImGui.SameLine();
                 ImGui.SetNextItemWidth(40);
-                ImGui.InputInt("##em", ref scheduleEndMinute[i]);
-                scheduleEndMinute[i] = Math.Clamp(scheduleEndMinute[i], 0, 59);
+                ImGui.InputInt("##em", ref slot.EndMinute);
+                slot.EndMinute = Math.Clamp(slot.EndMinute, 0, 59);
                 ImGui.SameLine();
-                ImGui.Checkbox("Next Day", ref scheduleNextDay[i]);
+                ImGui.Checkbox("Next Day", ref slot.NextDay);
+                ImGui.SameLine();
+                if (ImGui.SmallButton("X"))
+                {
+                    daySlots[i].RemoveAt(j);
+                    ImGui.PopID();
+                    break;
+                }
+                ImGui.PopID();
             }
             ImGui.PopID();
         }
@@ -323,16 +321,16 @@ public sealed class AddEditVenueWindow : Window
         var schedules = new List<CustomVenueSchedule>();
         for (var i = 0; i < 7; i++)
         {
-            if (scheduleActive[i])
+            foreach (var slot in daySlots[i])
             {
                 schedules.Add(new CustomVenueSchedule
                 {
                     Day = (DayOfWeek)i,
-                    StartHour = scheduleStartHour[i],
-                    StartMinute = scheduleStartMinute[i],
-                    EndHour = scheduleEndHour[i],
-                    EndMinute = scheduleEndMinute[i],
-                    NextDay = scheduleNextDay[i],
+                    StartHour = slot.StartHour,
+                    StartMinute = slot.StartMinute,
+                    EndHour = slot.EndHour,
+                    EndMinute = slot.EndMinute,
+                    NextDay = slot.NextDay,
                 });
             }
         }
@@ -366,7 +364,7 @@ public sealed class AddEditVenueWindow : Window
                     Apartment = hasApartment ? apartment : null,
                     Subdivision = subdivision,
                     Sfw = sfw,
-                    TimezoneId = TimezoneOptions[selectedTimezoneIndex].Id,
+                    TimezoneId = timezoneId,
                     Schedules = schedules,
                     Tags = new HashSet<string>(selectedTags),
                 });
@@ -395,7 +393,7 @@ public sealed class AddEditVenueWindow : Window
                     existing.Apartment = hasApartment ? apartment : null;
                     existing.Subdivision = subdivision;
                     existing.Sfw = sfw;
-                    existing.TimezoneId = TimezoneOptions[selectedTimezoneIndex].Id;
+                    existing.TimezoneId = timezoneId;
                     existing.Schedules = schedules;
                     existing.Tags = new HashSet<string>(selectedTags);
                 }
@@ -414,7 +412,7 @@ public sealed class AddEditVenueWindow : Window
                     Apartment = hasApartment ? apartment : null,
                     Subdivision = subdivision,
                     Sfw = sfw,
-                    TimezoneId = TimezoneOptions[selectedTimezoneIndex].Id,
+                    TimezoneId = timezoneId,
                     Schedules = schedules,
                     Tags = new HashSet<string>(selectedTags),
                 };
