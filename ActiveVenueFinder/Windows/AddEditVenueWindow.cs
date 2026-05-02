@@ -38,7 +38,7 @@ public sealed class AddEditVenueWindow : Window
     public Action? OnSaved { get; set; }
 
     private static readonly string[] DayNames =
-        { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+        { "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
 
     private readonly List<List<EditableSlot>> daySlots = new();
 
@@ -160,7 +160,7 @@ public sealed class AddEditVenueWindow : Window
         ResetSchedules();
         foreach (var s in schedules)
         {
-            // API uses Mon=0..Sun=6, EditableSlot index uses .NET DayOfWeek Sun=0..Sat=6.
+            // API: Mon=0..Sun=6 → EditableSlot-Index (.NET DayOfWeek): Sun=0..Sat=6
             var idx = ((s.Day % 7) + 8) % 7;
             daySlots[idx].Add(new EditableSlot
             {
