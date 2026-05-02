@@ -1,12 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
 using System.Numerics;
-using System.Text.Json;
-using System.Threading.Tasks;
 using ActiveVenueFinder.Models;
 using ActiveVenueFinder.Services;
+using ActiveVenueFinder.Services.Lifestream;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 
@@ -15,24 +13,25 @@ namespace ActiveVenueFinder.Windows;
 public sealed class PopoutWindow : Window, IDisposable
 {
     private readonly Config config;
+    private readonly VenueRepository repository;
+    private readonly VenueTravelService travelService;
     private readonly VenueFinderWindow mainWindow;
     private readonly AddEditVenueWindow addEditWindow;
-    private readonly HttpClient httpClient = new();
 
-    private List<Venue>? venues;
-    private bool isLoading;
-    private long lastFetchTicks;
-    private const long FetchIntervalMs = 15 * 60 * 1000;
+    private long lastRefreshTicks;
+    private const long RefreshIntervalMs = 15 * 60 * 1000;
 
     private Venue? contextMenuVenue;
     private string? pendingBlacklistId;
     private bool openBlacklistConfirm;
 
-    public PopoutWindow(Config config, VenueFinderWindow mainWindow, AddEditVenueWindow addEditWindow)
+    public PopoutWindow(Config config, VenueRepository repository, VenueTravelService travelService, VenueFinderWindow mainWindow, AddEditVenueWindow addEditWindow)
         : base("##PopoutVenueFinder",
                ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoScrollbar)
     {
         this.config = config;
+        this.repository = repository;
+        this.travelService = travelService;
         this.mainWindow = mainWindow;
         this.addEditWindow = addEditWindow;
 
@@ -41,20 +40,18 @@ public sealed class PopoutWindow : Window, IDisposable
 
         IsOpen = config.PopoutOpen;
         if (IsOpen)
-            FetchVenues();
+            repository.RefreshAsync(force: false);
     }
 
     public void Dispose()
     {
-        httpClient.Dispose();
     }
 
     public override void OnOpen()
     {
         config.PopoutOpen = true;
         config.Save();
-        if (venues == null)
-            FetchVenues();
+        repository.RefreshAsync(force: false);
     }
 
     public override void OnClose()
@@ -62,31 +59,6 @@ public sealed class PopoutWindow : Window, IDisposable
         config.PopoutOpen = false;
         config.Save();
     }
-
-    private void FetchVenues()
-    {
-        isLoading = true;
-        lastFetchTicks = Environment.TickCount64;
-        Task.Run(async () =>
-        {
-            try
-            {
-                var json = await httpClient.GetStringAsync(VenueFinderWindow.ApiUrl);
-                var result = JsonSerializer.Deserialize<List<Venue>>(json);
-                venues = result ?? new List<Venue>();
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.Error($"Popout fetch failed: {ex}");
-            }
-            finally
-            {
-                isLoading = false;
-            }
-        });
-    }
-
-    private List<Venue> BuildVenueList() => VenueResolver.BuildAll(venues, config);
 
     private static string FormatRemaining(List<TimeSlot> slots)
     {
@@ -98,19 +70,22 @@ public sealed class PopoutWindow : Window, IDisposable
 
     public override void Draw()
     {
-        if (Environment.TickCount64 - lastFetchTicks >= FetchIntervalMs)
-            FetchVenues();
+        if (Environment.TickCount64 - lastRefreshTicks >= RefreshIntervalMs)
+        {
+            lastRefreshTicks = Environment.TickCount64;
+            repository.RefreshAsync(force: false);
+        }
 
-        if (isLoading && venues == null)
+        if (repository.State.Status == RepositoryStatus.Loading && !repository.HasData)
         {
             ImGui.TextUnformatted("Loading...");
             return;
         }
 
-        if (venues == null)
+        if (!repository.HasData && config.CustomVenues.Count == 0)
             return;
 
-        var allVenues = BuildVenueList();
+        var allVenues = repository.GetEffectiveVenues();
         var nowUtc = DateTimeOffset.UtcNow;
         var windowStart = nowUtc - TimeSpan.FromHours(1);
         var windowEnd = nowUtc + TimeSpan.FromDays(1);
@@ -176,7 +151,8 @@ public sealed class PopoutWindow : Window, IDisposable
         if (contextMenuVenue != null)
         {
             var builder = new ContextMenuBuilder(config, addEditWindow,
-                () => { /* popout has no cache */ },
+                () => travelService.IsAvailable,
+                () => repository.NotifyConfigChanged(),
                 mainWindow.DispatchAction);
             if (builder.Draw(contextMenuVenue, out var blacklistId) && blacklistId != null)
             {
@@ -197,19 +173,20 @@ public sealed class PopoutWindow : Window, IDisposable
         var confirmOpen = true;
         if (ImGui.BeginPopupModal("PopoutConfirmBlacklist", ref confirmOpen, ImGuiWindowFlags.AlwaysAutoResize))
         {
-            ImGui.TextUnformatted("Venue wirklich blacklisten?");
-            if (ImGui.Button("Ja"))
+            ImGui.TextUnformatted("Really blacklist this venue?");
+            if (ImGui.Button("Yes"))
             {
                 if (pendingBlacklistId != null)
                 {
                     config.Blacklist.Add(pendingBlacklistId);
                     config.Save();
+                    repository.NotifyConfigChanged();
                 }
                 pendingBlacklistId = null;
                 ImGui.CloseCurrentPopup();
             }
             ImGui.SameLine();
-            if (ImGui.Button("Nein"))
+            if (ImGui.Button("No"))
             {
                 pendingBlacklistId = null;
                 ImGui.CloseCurrentPopup();

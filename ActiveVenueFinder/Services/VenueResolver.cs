@@ -140,11 +140,12 @@ public static class VenueResolver
             },
         };
         // Materialize all custom schedules into venue.Schedule (for TimelineCalculator expansion).
+        // CustomVenueSchedule.Day is .NET DayOfWeek (Sun=0). VenueSchedule.Day uses API convention (Mon=0..Sun=6).
         foreach (var s in cv.Schedules)
         {
             venue.Schedule.Add(new VenueSchedule
             {
-                Day = (int)s.Day,
+                Day = ((int)s.Day + 6) % 7,
                 Start = new VenueTime { Hour = s.StartHour, Minute = s.StartMinute, TimeZone = cv.TimezoneId },
                 End = new VenueTime { Hour = s.EndHour, Minute = s.EndMinute, TimeZone = cv.TimezoneId, NextDay = s.NextDay },
             });

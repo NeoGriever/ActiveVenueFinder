@@ -1,3 +1,7 @@
+using ActiveVenueFinder.Services;
+using ActiveVenueFinder.Services.Api;
+using ActiveVenueFinder.Services.Lifestream;
+using ActiveVenueFinder.Services.Tags;
 using ActiveVenueFinder.Windows;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
@@ -12,28 +16,42 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
-    [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
+    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     private const string CommandName = "/avf";
 
     public Config Configuration { get; }
 
     private readonly WindowSystem windowSystem = new("ActiveVenueFinder");
+    private readonly VenueApiClient apiClient;
+    private readonly VenueRepository repository;
+    private readonly VenueTagService tagService;
+    private readonly LifestreamAvailabilityService lifestreamAvailability;
+    private readonly VenueTravelService travelService;
     private readonly VenueFinderWindow mainWindow;
     private readonly AddEditVenueWindow addEditWindow;
     private readonly PopoutWindow popoutWindow;
     private readonly SettingsWindow settingsWindow;
     private readonly TimezonePickerWindow timezonePicker;
+    private readonly VenueInfoWindow venueInfoWindow;
 
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Config ?? new Config();
+        ConfigMigrator.Run(Configuration);
+
+        apiClient = new VenueApiClient();
+        repository = new VenueRepository(apiClient, Configuration, PluginInterface);
+        tagService = new VenueTagService(Configuration, () => repository.NotifyConfigChanged());
+        lifestreamAvailability = new LifestreamAvailabilityService(PluginInterface);
+        travelService = new VenueTravelService(lifestreamAvailability);
 
         timezonePicker = new TimezonePickerWindow(Configuration);
-        addEditWindow = new AddEditVenueWindow(Configuration, timezonePicker);
-        settingsWindow = new SettingsWindow(Configuration);
-        mainWindow = new VenueFinderWindow(Configuration, PlayerState, addEditWindow, settingsWindow, timezonePicker);
-        popoutWindow = new PopoutWindow(Configuration, mainWindow, addEditWindow);
+        addEditWindow = new AddEditVenueWindow(Configuration, tagService);
+        settingsWindow = new SettingsWindow(Configuration, lifestreamAvailability);
+        venueInfoWindow = new VenueInfoWindow(TextureProvider, Configuration, tagService);
+        mainWindow = new VenueFinderWindow(Configuration, PlayerState, repository, tagService, travelService, addEditWindow, settingsWindow, timezonePicker, venueInfoWindow);
+        popoutWindow = new PopoutWindow(Configuration, repository, travelService, mainWindow, addEditWindow);
         mainWindow.PopoutWindow = popoutWindow;
 
         windowSystem.AddWindow(addEditWindow);
@@ -41,6 +59,7 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.AddWindow(timezonePicker);
         windowSystem.AddWindow(mainWindow);
         windowSystem.AddWindow(popoutWindow);
+        windowSystem.AddWindow(venueInfoWindow);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -61,6 +80,9 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.RemoveAllWindows();
         popoutWindow.Dispose();
         mainWindow.Dispose();
+        venueInfoWindow.Dispose();
+        repository.Dispose();
+        apiClient.Dispose();
     }
 
     private void OnCommand(string command, string args)

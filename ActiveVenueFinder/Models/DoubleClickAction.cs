@@ -8,4 +8,5 @@ public enum DoubleClickAction
     CopyAddress,
     CopyName,
     CopyVenuePageUrl,
+    OpenInfo,
 }

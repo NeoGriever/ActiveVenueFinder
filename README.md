@@ -1,84 +1,85 @@
 # Active Venue Finder
 
-A Dalamud plugin for Final Fantasy XIV that lets you browse active venues from [FFXIV Venues](https://ffxivvenues.com) and teleport to them with one click using [Lifestream](https://github.com/NightmareXIV/Lifestream).
+Active Venue Finder is a Dalamud plugin for browsing Final Fantasy XIV venues using public venue data from ffxivvenues.com.
 
-![icon](ActiveVenueFinder/images/icon.png)
+The plugin is primarily an information and overview tool. It loads venue data, displays it in a searchable table, and helps you inspect venue details such as location, opening times, tags, website links, Discord links, and related venue information.
 
 ## Features
 
-- **Live Venue List** -- Fetches venues from the FFXIV Venues API and displays them in a sortable table with datacenter-colored entries
-- **One-Click Teleport** -- Double-click any venue to travel there via Lifestream (`/li` command)
-- **Popout Window** -- A compact widget showing your favorites and the 3 most recently opened venues, always accessible
-- **Favorites & Blacklist** -- Star venues you visit often and hide ones you don't want to see
-- **Custom Venues** -- Add your own venues with name, location, schedule, and tags -- they appear alongside API venues
-- **Venue Overrides** -- Edit API venue details locally (name, location, schedule, tags) without affecting the source
-- **Tag System** -- Filter venues by predefined tags (Gamba, Giveaway, Court) or create custom tags. Search with `T:tagname`
-- **Timeline Bar** -- Visual timeline showing when each venue opens and closes across a 48-hour window
-- **Timezone Support** -- Switch the displayed times to any system timezone
-- **Lookahead** -- Preview which venues will be open in the coming hours
-- **Region Awareness** -- Venues on your datacenter region are highlighted, cross-region venues are dimmed
-- **SFW Indicator** -- Each venue shows whether it's marked as SFW or not
-
-## Requirements
-
-- [Dalamud](https://github.com/goatcorp/Dalamud) (API Level 14)
-- [Lifestream](https://github.com/NightmareXIV/Lifestream) plugin (for teleportation)
-
-## Installation
-
-Add the following custom repository URL in Dalamud's plugin installer settings:
-
-```
-https://raw.githubusercontent.com/NeoGriever/ActiveVenueFinder/main/pluginmaster.json
-```
-
-Then search for **Active Venue Finder** in the plugin list and install it.
+- Browse venues from ffxivvenues.com
+- Search and filter the venue list
+- View venue details in a dedicated info window
+- Display venue opening information in a timeline-oriented view
+- Use venue tags provided by ffxivvenues.com
+- Add local custom tags for personal organization
+- Add and manage local custom venues
+- Mark venues as favorites or hide unwanted entries
+- Optionally travel to a venue plot through Lifestream, if Lifestream is installed and enabled
 
 ## Usage
 
-Open the main window with the chat command:
+Open the plugin with `/avf`.
 
-```
-/avf
-```
+This opens the main venue browser. From there, you can search for venues, filter the list, open detailed venue information, and manage local entries or tags depending on the available options in the UI.
 
-### Main Window
+Double-clicking a venue opens its information view by default.
 
-The main window shows all venues in a table. You can:
+## Venue Information
 
-- **Sort** by clicking column headers (Name, World, Ward, Time, Remaining, etc.)
-- **Search** by typing in the search bar -- use `T:` prefix to search by tag
-- **Teleport** by double-clicking a venue row
-- **Right-click** a venue for more options:
-  - Open venue page on ffxivvenues.com
-  - Travel to venue
-  - Copy Lifestream command
-  - Add/remove from favorites
-  - Blacklist/unblacklist
-  - Edit venue details (creates a local override)
+The venue information view shows the selected venue in more detail.
 
-### Popout Window
+Depending on the available data, this may include:
 
-Toggle the popout via the main window. It shows a compact list of:
-- All your favorited active venues
-- The 3 most recently opened non-favorite venues
+- Venue name
+- World and data center
+- Housing district, ward, plot, apartment, or subdivision information
+- Opening times
+- Tags
+- Description
+- Website links
+- Discord links
+- Banner or venue image
 
-Double-click to teleport, right-click for the context menu.
+External links are only opened when you explicitly click them.
 
-### Custom Venues
+## Tags
 
-Add venues that aren't listed on FFXIV Venues:
+Active Venue Finder uses tags provided by ffxivvenues.com where available.
 
-1. Right-click in the main window and select "Add Venue"
-2. Fill in name, world, district, ward, plot (or apartment)
-3. Set a weekly schedule with timezone
-4. Add tags as needed
-5. Save -- the venue appears in your list like any other
+You can also add local tags to venues. Local tags are stored in your plugin configuration and are only used by your local installation. They do not modify data on ffxivvenues.com.
 
-## Building from Source
+API tags and local tags are kept separate internally, but both can be used for searching and organizing venues.
 
-```bash
-dotnet build ActiveVenueFinder/ActiveVenueFinder.csproj -c Release
-```
+## Timeline View
 
-The build uses DalamudPackager to produce `latest.zip` in the Release output directory.
+The timeline view helps you see venue openings in a time-based layout.
+
+By default, the timeline uses American Eastern time for display. This only affects the timeline view and does not change the underlying venue data.
+
+## Optional Lifestream Integration
+
+Active Venue Finder can optionally integrate with Lifestream to make traveling to venue plots more convenient.
+
+This integration is optional. If Lifestream is not installed, loaded, and enabled, travel controls are hidden and the plugin continues to work as a venue browser.
+
+When Lifestream is available, travel actions are only triggered by explicit user interaction, such as pressing a travel button or selecting a travel action. The plugin does not automatically teleport or travel in the background.
+
+## Data Sources and Network Usage
+
+Active Venue Finder loads public venue data from ffxivvenues.com.
+
+The plugin may also load venue images or banners when venue details are opened. No travel action, external link, or website is opened without user interaction.
+
+The plugin is designed as a browsing and organization tool and does not require Lifestream to be useful.
+
+## AI Assistance Disclosure
+
+Claude Code was used as an assistance tool during development.
+
+It was used to help implement selected features, understand and apply documentation, identify potential errors, and suggest possible solution approaches. The project was reviewed and adjusted manually, and the final responsibility for the code, behavior, testing, and maintenance remains with the plugin author.
+
+## Notes
+
+This plugin depends on publicly available venue data. If ffxivvenues.com is unavailable or returns incomplete data, some venue entries may be missing or outdated until the data source is reachable again.
+
+Local custom venues, favorites, hidden entries, and local tags are stored in the plugin configuration.

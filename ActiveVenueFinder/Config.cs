@@ -8,34 +8,42 @@ namespace ActiveVenueFinder;
 [Serializable]
 public sealed class Config : IPluginConfiguration
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
 
-    public string SelectedTimezoneId = "";
+    public string SelectedTimezoneId { get; set; } = "";
 
-    public HashSet<string> Favorites = new();
-    public HashSet<string> Blacklist = new();
+    public HashSet<string> Favorites { get; set; } = new();
+    public HashSet<string> Blacklist { get; set; } = new();
 
-    public List<CustomVenue> CustomVenues = new();
-    public int NextCustomVenueId = 1;
+    public List<CustomVenue> CustomVenues { get; set; } = new();
+    public int NextCustomVenueId { get; set; } = 1;
 
-    public Dictionary<string, VenueOverride> VenueOverrides = new();
-    public List<string> CustomTags = new();
+    public Dictionary<string, VenueOverride> VenueOverrides { get; set; } = new();
+    public List<string> CustomTags { get; set; } = new();
 
-    public bool PopoutOpen;
+    // Per-venue local tags. Key is VenueKey.ToString() ("api:<id>" or "custom:<id>").
+    public Dictionary<string, List<string>> LocalTags { get; set; } = new();
+
+    // When true, scan venue descriptions for predefined+custom tag names and surface them as Inferred.
+    public bool InferTagsFromDescription { get; set; } = false;
+
+    public bool PopoutOpen { get; set; }
 
     // Lookahead range -72..168 (hours)
-    public int InitialLookaheadHours = 0;
+    public int InitialLookaheadHours { get; set; } = 0;
 
-    // Double-click action
-    public DoubleClickAction DoubleClickAction { get; set; } = DoubleClickAction.LifestreamGoto;
+    // Default action when a venue row is double-clicked.
+    public DoubleClickAction DoubleClickAction { get; set; } = DoubleClickAction.OpenInfo;
 
-    // Cache interval (seconds)
+    // Cache rebuild interval (seconds) for the venue table.
     public int CacheIntervalSeconds { get; set; } = 3;
 
-    // Appearance
+    // Show venue info popup window instead of opening the external venue page.
+    public bool ShowVenueInfoPopup { get; set; } = false;
+
     public AppearanceSettings Appearance { get; set; } = new();
 
-    // Filter defaults persisted across sessions
+    // Persisted filter defaults.
     public string FilterWorld { get; set; } = "";
     public string FilterDistrict { get; set; } = "";
 

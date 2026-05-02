@@ -129,7 +129,8 @@ public static class TimelineCalculator
                 }
                 catch { continue; }
 
-                if ((int)tzMidnight.DayOfWeek != sch.Day)
+                // API uses Mon=0..Sun=6, .NET DayOfWeek uses Sun=0..Sat=6.
+                if ((((int)tzMidnight.DayOfWeek + 6) % 7) != sch.Day)
                     continue;
 
                 var localDate = tzMidnight.DateTime.Date;

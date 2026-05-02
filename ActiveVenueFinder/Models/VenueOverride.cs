@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 
 namespace ActiveVenueFinder.Models;
 
@@ -14,7 +15,12 @@ public sealed class VenueOverride
     public int? Apartment { get; set; }
     public bool Subdivision { get; set; }
     public bool Sfw { get; set; } = true;
-    public string TimezoneId { get; set; } = "America/New_York";
     public List<CustomVenueSchedule> Schedules { get; set; } = new();
+
+    // Legacy v1 fields preserved only so ConfigMigrator can move data out. Never read by new code.
+    [EditorBrowsable(EditorBrowsableState.Never)]
     public HashSet<string> Tags { get; set; } = new();
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public string TimezoneId { get; set; } = "";
 }

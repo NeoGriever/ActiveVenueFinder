@@ -1,13 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
 using System.Numerics;
-using System.Text.Json;
-using System.Threading.Tasks;
 using ActiveVenueFinder.Models;
 using ActiveVenueFinder.Services;
+using ActiveVenueFinder.Services.Filtering;
+using ActiveVenueFinder.Services.Lifestream;
+using ActiveVenueFinder.Services.Tags;
+using ActiveVenueFinder.Ui.Common;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 
@@ -15,21 +17,21 @@ namespace ActiveVenueFinder.Windows;
 
 public sealed class VenueFinderWindow : Window, IDisposable
 {
-    internal const string ApiUrl = "https://api.ffxivvenues.com/v1.0/venue";
     private const double TimelineHours = 48.0;
 
     private readonly IPlayerState playerState;
     private readonly Config config;
-    private readonly HttpClient httpClient = new();
+    private readonly VenueRepository repository;
+    private readonly VenueTagService tagService;
+    private readonly VenueTravelService travelService;
+    private readonly VenueFilterService filterService;
     private readonly AddEditVenueWindow addEditWindow;
     private readonly SettingsWindow settingsWindow;
     private readonly TimezonePickerWindow timezonePicker;
+    private readonly VenueInfoWindow venueInfoWindow;
 
     internal PopoutWindow? PopoutWindow { get; set; }
 
-    private List<Venue>? venues;
-    private bool isLoading;
-    private string? errorMessage;
     private string? pendingBlacklistId;
     private bool openBlacklistConfirm;
 
@@ -47,6 +49,7 @@ public sealed class VenueFinderWindow : Window, IDisposable
     private long lastCacheMs;
     private bool cacheInvalidated = true;
     private List<Venue>? cachedVenuesRef;
+    private List<Venue>? lastEffectiveSnapshot;
     private int cachedCustomVenueCount = -1;
     private string? lastKnownPlayerRegion;
     private string searchText = "";
@@ -86,9 +89,13 @@ public sealed class VenueFinderWindow : Window, IDisposable
     public VenueFinderWindow(
         Config config,
         IPlayerState playerState,
+        VenueRepository repository,
+        VenueTagService tagService,
+        VenueTravelService travelService,
         AddEditVenueWindow addEditWindow,
         SettingsWindow settingsWindow,
-        TimezonePickerWindow timezonePicker)
+        TimezonePickerWindow timezonePicker,
+        VenueInfoWindow venueInfoWindow)
         : base("Active Venue Finder###ActiveVenueFinder")
     {
         SizeConstraints = new WindowSizeConstraints
@@ -101,11 +108,21 @@ public sealed class VenueFinderWindow : Window, IDisposable
 
         this.config = config;
         this.playerState = playerState;
+        this.repository = repository;
+        this.tagService = tagService;
+        this.travelService = travelService;
+        this.filterService = new VenueFilterService(tagService);
         this.addEditWindow = addEditWindow;
         this.settingsWindow = settingsWindow;
         this.timezonePicker = timezonePicker;
-        this.addEditWindow.OnSaved = () => cacheInvalidated = true;
+        this.venueInfoWindow = venueInfoWindow;
+        this.addEditWindow.OnSaved = () =>
+        {
+            cacheInvalidated = true;
+            repository.NotifyConfigChanged();
+        };
         this.settingsWindow.OnAppearanceChanged = () => cacheInvalidated = true;
+        repository.Changed += OnRepositoryChanged;
 
         if (!string.IsNullOrEmpty(config.SelectedTimezoneId))
         {
@@ -116,44 +133,69 @@ public sealed class VenueFinderWindow : Window, IDisposable
         lookaheadHours = config.InitialLookaheadHours;
         filterWorld = config.FilterWorld;
         filterDistrict = config.FilterDistrict;
+
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.Comments,
+            Priority = 90,
+            Click = _ =>
+            {
+                Dalamud.Utility.Util.OpenLink("https://discord.gg/HBh4nSbuJp");
+            },
+            ShowTooltip = () =>
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                ImGui.SetTooltip("Join my discord for\n- bug reports\n- ideas\n- faq\n- just talk\n\n(still working on it!)");
+            }
+        });
+
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.Coffee,
+            Priority = 100,
+            Click = _ =>
+            {
+                Dalamud.Utility.Util.OpenLink("https://buymeacoffee.com/mindconstructor");
+            },
+            ShowTooltip = () =>
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                ImGui.SetTooltip("If you like the plugin,\nthink about to spend me something\nthrough buy me a coffee.\n\n<3 <3 <3");
+            }
+        });
+
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            Icon = FontAwesomeIcon.Cogs,
+            Priority = 110,
+            Click = _ =>
+            {
+                settingsWindow.IsOpen = !settingsWindow.IsOpen;
+            },
+            ShowTooltip = () =>
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                ImGui.SetTooltip("Open the configuration window");
+            }
+        });
     }
 
     public void Dispose()
     {
-        httpClient.Dispose();
+        repository.Changed -= OnRepositoryChanged;
     }
 
-    public override void OnOpen() => FetchVenues();
+    public override void OnOpen() => repository.RefreshAsync(force: false);
 
-    public List<Venue> GetResolvedVenues() => VenueResolver.BuildAll(venues, config);
+    public List<Venue> GetResolvedVenues() => repository.GetEffectiveVenues();
 
-    private void FetchVenues()
+    // Repository state changed: invalidate the row cache so the next Draw rebuilds from fresh data.
+    private void OnRepositoryChanged()
     {
-        isLoading = true;
-        errorMessage = null;
-        venues = null;
-        cachedRows = null;
-
-        Task.Run(async () =>
-        {
-            try
-            {
-                var json = await httpClient.GetStringAsync(ApiUrl);
-                var result = JsonSerializer.Deserialize<List<Venue>>(json);
-                venues = result ?? new List<Venue>();
-                cacheInvalidated = true;
-            }
-            catch (Exception ex)
-            {
-                errorMessage = ex.Message;
-                Plugin.Log.Error($"Failed to fetch venues: {ex}");
-            }
-            finally
-            {
-                isLoading = false;
-            }
-        });
+        cacheInvalidated = true;
     }
+
+    public void Refresh() => repository.RefreshAsync(force: true);
 
     private string? GetPlayerRegion()
     {
@@ -171,50 +213,41 @@ public sealed class VenueFinderWindow : Window, IDisposable
         catch (InvalidOperationException) { return lastKnownPlayerRegion; }
     }
 
+    // Effective tag set for filtering: API + Local + (optional) Inferred via VenueTagService.
     private HashSet<string> GetEffectiveTags(Venue venue)
     {
-        var tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        if (config.VenueOverrides.TryGetValue(venue.Id, out var ov))
-            tags.UnionWith(ov.Tags);
-        else if (VenueResolver.IsCustomVenue(venue))
-        {
-            var cv = config.CustomVenues.FirstOrDefault(c => c.Id.ToString() == venue.Id);
-            if (cv != null) tags.UnionWith(cv.Tags);
-        }
-
-        var descText = string.Join(" ", venue.Description);
-        if (!string.IsNullOrEmpty(descText))
-        {
-            foreach (var tag in VenueResolver.PredefinedTags.Concat(config.CustomTags))
-            {
-                if (descText.Contains(tag, StringComparison.OrdinalIgnoreCase))
-                    tags.Add(tag);
-            }
-        }
-
-        return tags;
+        var entries = tagService.GetEffective(venue);
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in entries) set.Add(e.Tag);
+        return set;
     }
 
+    // Routes a row interaction to the user-configured action. LifestreamGoto silently falls back
+    // to OpenInfo when Lifestream is not currently available, so the click never dead-ends.
     public void DispatchAction(Venue venue, DoubleClickAction action)
     {
+        if (action == DoubleClickAction.LifestreamGoto && !travelService.IsAvailable)
+            action = DoubleClickAction.OpenInfo;
+
         switch (action)
         {
             case DoubleClickAction.LifestreamGoto:
-            {
-                var cmd = VenueResolver.BuildLifestreamCommand(venue.Location);
-                Plugin.Log.Information($"Travel: {cmd}");
-                Plugin.SendChatCommand(cmd);
+                travelService.TryTravel(venue, out _);
                 break;
-            }
             case DoubleClickAction.OpenVenuePage:
             {
-                if (!VenueResolver.IsCustomVenue(venue))
+                if (VenueResolver.IsCustomVenue(venue)) break;
+                if (config.ShowVenueInfoPopup)
+                    venueInfoWindow.Show(venue, displayTimeZone);
+                else
                     Dalamud.Utility.Util.OpenLink(VenueResolver.BuildVenuePageUrl(venue));
                 break;
             }
+            case DoubleClickAction.OpenInfo:
+                venueInfoWindow.Show(venue, displayTimeZone);
+                break;
             case DoubleClickAction.CopyAddress:
-                ImGui.SetClipboardText(VenueResolver.BuildLifestreamCommand(venue.Location));
+                ImGui.SetClipboardText(LifestreamCommandBuilder.Build(venue.Location));
                 break;
             case DoubleClickAction.CopyName:
                 ImGui.SetClipboardText(venue.Name);
@@ -254,7 +287,6 @@ public sealed class VenueFinderWindow : Window, IDisposable
     private bool NeedsRebuild()
     {
         if (cachedRows == null || cacheInvalidated) return true;
-        if (!ReferenceEquals(venues, cachedVenuesRef)) return true;
         if (config.CustomVenues.Count != cachedCustomVenueCount) return true;
         if (searchText != cachedSearchText) return true;
         if (filterWorld != cachedFilterWorld) return true;
@@ -268,46 +300,14 @@ public sealed class VenueFinderWindow : Window, IDisposable
 
     private void RebuildCache(string? playerRegion)
     {
-        var allVenues = VenueResolver.BuildAll(venues, config);
+        var allVenues = repository.GetEffectiveVenues();
+        lastEffectiveSnapshot = allVenues;
 
-        // Search filter (name or T:tag)
-        if (!string.IsNullOrEmpty(searchText))
-        {
-            if (searchText.StartsWith("T:", StringComparison.OrdinalIgnoreCase))
-            {
-                var tagQuery = searchText.Substring(2).Trim();
-                if (!string.IsNullOrEmpty(tagQuery))
-                    allVenues.RemoveAll(v =>
-                        !GetEffectiveTags(v).Any(t => t.StartsWith(tagQuery, StringComparison.OrdinalIgnoreCase)));
-            }
-            else
-            {
-                allVenues.RemoveAll(v => !v.Name.Contains(searchText, StringComparison.OrdinalIgnoreCase));
-            }
-        }
+        // Apply parsed search query (name OR T:tag prefix) + world/dc/district filters via service.
+        var query = VenueSearchQuery.Parse(searchText, filterWorld, filterDistrict);
+        filterService.Apply(allVenues, query);
         cachedSearchText = searchText;
-
-        // World filter
-        if (!string.IsNullOrEmpty(filterWorld))
-        {
-            if (filterWorld.StartsWith("DC:", StringComparison.Ordinal))
-            {
-                var dc = filterWorld.Substring(3);
-                allVenues.RemoveAll(v => !string.Equals(v.Location.DataCenter, dc, StringComparison.OrdinalIgnoreCase));
-            }
-            else if (filterWorld.StartsWith("World:", StringComparison.Ordinal))
-            {
-                var w = filterWorld.Substring(6);
-                allVenues.RemoveAll(v => !string.Equals(v.Location.World, w, StringComparison.OrdinalIgnoreCase));
-            }
-        }
         cachedFilterWorld = filterWorld;
-
-        // District filter
-        if (!string.IsNullOrEmpty(filterDistrict))
-        {
-            allVenues.RemoveAll(v => !string.Equals(v.Location.District, filterDistrict, StringComparison.OrdinalIgnoreCase));
-        }
         cachedFilterDistrict = filterDistrict;
 
         // Compute window
@@ -527,7 +527,7 @@ public sealed class VenueFinderWindow : Window, IDisposable
         cachedRows = rows;
         lastCacheMs = Environment.TickCount64;
         cacheInvalidated = false;
-        cachedVenuesRef = venues;
+        cachedVenuesRef = lastEffectiveSnapshot;
         cachedCustomVenueCount = config.CustomVenues.Count;
         cachedLookaheadHours = lookaheadHours;
         cachedWindowStartUtc = windowStartUtc;
@@ -539,18 +539,19 @@ public sealed class VenueFinderWindow : Window, IDisposable
     {
         DrawHeader();
         ImGui.Separator();
+        VenueStatusBar.Draw(repository, () => repository.RefreshAsync(force: true));
+        ImGui.Separator();
 
-        if (isLoading)
+        var status = repository.State.Status;
+        if (status == RepositoryStatus.Loading && !repository.HasData)
         {
-            ImGui.TextUnformatted("Loading venues...");
             return;
         }
-        if (errorMessage != null)
+        if (status == RepositoryStatus.Failed && !repository.HasData && config.CustomVenues.Count == 0)
         {
-            ImGui.TextColored(new Vector4(1, 0.3f, 0.3f, 1), $"Error: {errorMessage}");
             return;
         }
-        if (venues == null || (venues.Count == 0 && config.CustomVenues.Count == 0))
+        if (!repository.HasData && config.CustomVenues.Count == 0)
         {
             ImGui.TextUnformatted("No venues found.");
             return;
@@ -587,7 +588,7 @@ public sealed class VenueFinderWindow : Window, IDisposable
         ImGui.SameLine();
 
         if (ImGui.Button("Refresh"))
-            FetchVenues();
+            repository.RefreshAsync(force: true);
 
         ImGui.SameLine();
         if (ImGui.Button("+"))
@@ -854,9 +855,9 @@ public sealed class VenueFinderWindow : Window, IDisposable
         if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
             DispatchAction(row.Venue, config.DoubleClickAction);
 
-        // 8: Action (Go arrow)
+        // 8: Action (Go arrow). Hidden when Lifestream is unavailable or the venue is offshore.
         ImGui.TableNextColumn();
-        if (!row.IsOtherContinent)
+        if (!row.IsOtherContinent && travelService.IsAvailable)
         {
             if (ImGui.SmallButton($"->##go{row.Venue.Id}"))
             {
@@ -983,6 +984,7 @@ public sealed class VenueFinderWindow : Window, IDisposable
         if (contextMenuVenue != null)
         {
             var builder = new ContextMenuBuilder(config, addEditWindow,
+                () => travelService.IsAvailable,
                 () => cacheInvalidated = true,
                 DispatchAction);
             if (builder.Draw(contextMenuVenue, out var blacklistId) && blacklistId != null)
@@ -1004,8 +1006,8 @@ public sealed class VenueFinderWindow : Window, IDisposable
         var confirmOpen = true;
         if (ImGui.BeginPopupModal("ConfirmBlacklist", ref confirmOpen, ImGuiWindowFlags.AlwaysAutoResize))
         {
-            ImGui.TextUnformatted("Venue wirklich blacklisten?");
-            if (ImGui.Button("Ja"))
+            ImGui.TextUnformatted("Really blacklist this venue?");
+            if (ImGui.Button("Yes"))
             {
                 if (pendingBlacklistId != null)
                 {
@@ -1017,7 +1019,7 @@ public sealed class VenueFinderWindow : Window, IDisposable
                 ImGui.CloseCurrentPopup();
             }
             ImGui.SameLine();
-            if (ImGui.Button("Nein"))
+            if (ImGui.Button("No"))
             {
                 pendingBlacklistId = null;
                 ImGui.CloseCurrentPopup();

@@ -28,6 +28,18 @@ public sealed class Venue
 
     [JsonPropertyName("description")]
     public List<string> Description { get; set; } = new();
+
+    [JsonPropertyName("bannerUri")]
+    public string? BannerUri { get; set; }
+
+    [JsonPropertyName("tags")]
+    public List<string> Tags { get; set; } = new();
+
+    [JsonPropertyName("website")]
+    public string? Website { get; set; }
+
+    [JsonPropertyName("discord")]
+    public string? Discord { get; set; }
 }
 
 public sealed class VenueLocation

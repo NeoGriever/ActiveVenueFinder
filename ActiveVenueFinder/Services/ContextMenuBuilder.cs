@@ -10,31 +10,40 @@ public sealed class ContextMenuBuilder
 {
     private readonly Config config;
     private readonly AddEditVenueWindow addEditWindow;
+    private readonly Func<bool> isLifestreamAvailable;
     private readonly Action invalidateCache;
     private readonly Action<Venue, DoubleClickAction> dispatch;
 
     public ContextMenuBuilder(
         Config config,
         AddEditVenueWindow addEditWindow,
+        Func<bool> isLifestreamAvailable,
         Action invalidateCache,
         Action<Venue, DoubleClickAction> dispatch)
     {
         this.config = config;
         this.addEditWindow = addEditWindow;
+        this.isLifestreamAvailable = isLifestreamAvailable;
         this.invalidateCache = invalidateCache;
         this.dispatch = dispatch;
     }
 
-    /// <summary>Returns true if the user requested to open the blacklist confirmation dialog.</summary>
+    // Returns true if the user requested to open the blacklist confirmation dialog.
     public bool Draw(Venue venue, out string? blacklistRequestId)
     {
         blacklistRequestId = null;
         var isCv = VenueResolver.IsCustomVenue(venue);
         var requestedBlacklist = false;
 
-        // Travel
-        if (ImGui.MenuItem($"Travel to {venue.Name}"))
-            dispatch(venue, DoubleClickAction.LifestreamGoto);
+        // Travel: only shown when Lifestream is currently available.
+        if (isLifestreamAvailable())
+        {
+            if (ImGui.MenuItem($"Travel to {venue.Name}"))
+                dispatch(venue, DoubleClickAction.LifestreamGoto);
+        }
+
+        if (ImGui.MenuItem("Open Info"))
+            dispatch(venue, DoubleClickAction.OpenInfo);
 
         if (!isCv)
         {
@@ -42,6 +51,7 @@ public sealed class ContextMenuBuilder
                 dispatch(venue, DoubleClickAction.OpenVenuePage);
         }
 
+        // Always offered: even without Lifestream, the user might want the string for manual use.
         if (ImGui.MenuItem("Copy Lifestream command"))
             dispatch(venue, DoubleClickAction.CopyAddress);
 

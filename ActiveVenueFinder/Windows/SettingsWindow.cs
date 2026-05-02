@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using ActiveVenueFinder.Models;
+using ActiveVenueFinder.Services.Lifestream;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 
@@ -9,24 +10,25 @@ namespace ActiveVenueFinder.Windows;
 public sealed class SettingsWindow : Window
 {
     private readonly Config config;
+    private readonly LifestreamAvailabilityService lifestreamAvailability;
     private long lastDirtyMs;
     private bool dirty;
     private string newCustomTagInput = "";
 
     public Action? OnAppearanceChanged { get; set; }
 
-    public SettingsWindow(Config config)
+    public SettingsWindow(Config config, LifestreamAvailabilityService lifestreamAvailability)
         : base("Active Venue Finder - Settings###AvfSettings")
     {
         this.config = config;
+        this.lifestreamAvailability = lifestreamAvailability;
         SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = new Vector2(450, 400),
             MaximumSize = new Vector2(900, 1200),
         };
         Size = new Vector2(580, 700);
-        SizeCondition = ImGuiCond.FirstUseEver;
-    }
+        SizeCondition = ImGuiCond.FirstUseEver;}
 
     private void MarkDirty()
     {
@@ -44,13 +46,39 @@ public sealed class SettingsWindow : Window
             dirty = false;
         }
 
-        DrawGeneral();
-        DrawColorsLines();
-        DrawColorsBars();
-        DrawColorsBackgrounds();
-        DrawFavorite();
-        DrawTextSizing();
-        DrawTags();
+        if (ImGui.BeginTabBar("##avfSettingsTabs"))
+        {
+            if (ImGui.BeginTabItem("General"))
+            {
+                DrawGeneral();
+                ImGui.EndTabItem();
+            }
+            if (ImGui.BeginTabItem("Custom Tags"))
+            {
+                DrawTags();
+                ImGui.EndTabItem();
+            }
+            if (ImGui.BeginTabItem("Appearance"))
+            {
+                DrawColorsLines();
+                DrawColorsBars();
+                DrawColorsBackgrounds();
+                DrawFavorite();
+                DrawTextSizing();
+                ImGui.EndTabItem();
+            }
+            if (ImGui.BeginTabItem("Advanced"))
+            {
+                DrawAdvancedTab();
+                ImGui.EndTabItem();
+            }
+            if (ImGui.BeginTabItem("Lifestream"))
+            {
+                DrawLifestreamTab();
+                ImGui.EndTabItem();
+            }
+            ImGui.EndTabBar();
+        }
 
         if (dirty)
         {
@@ -72,10 +100,18 @@ public sealed class SettingsWindow : Window
 
     private void DrawGeneral()
     {
-        if (!ImGui.CollapsingHeader("General", ImGuiTreeNodeFlags.DefaultOpen)) return;
-
         var dca = (int)config.DoubleClickAction;
-        var actionLabels = new[] { "None", "Lifestream goto", "Open Venue Page", "Copy address (/li)", "Copy name", "Copy Venue Page URL" };
+        var lsTag = lifestreamAvailability.IsAvailable ? "" : " (Lifestream not installed)";
+        var actionLabels = new[]
+        {
+            "None",
+            "Lifestream goto" + lsTag,
+            "Open Venue Page",
+            "Copy address (/li)",
+            "Copy name",
+            "Copy Venue Page URL",
+            "Open Info",
+        };
         if (ImGui.Combo("Double-click action", ref dca, actionLabels, actionLabels.Length))
         {
             config.DoubleClickAction = (DoubleClickAction)dca;
@@ -95,6 +131,15 @@ public sealed class SettingsWindow : Window
             config.InitialLookaheadHours = initLook;
             MarkDirty();
         }
+
+        var infoPopup = config.ShowVenueInfoPopup;
+        if (ImGui.Checkbox("Show venue info as popup", ref infoPopup))
+        {
+            config.ShowVenueInfoPopup = infoPopup;
+            MarkDirty();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Replace 'Open Venue Page' with an in-game info panel.");
     }
 
     private void DrawColorsLines()
@@ -237,10 +282,39 @@ public sealed class SettingsWindow : Window
         if (ImGui.SliderFloat("Line thickness scale", ref lt, 0.5f, 3f)) { a.LineThicknessScale = lt; MarkDirty(); }
     }
 
+    private void DrawLifestreamTab()
+    {
+        var available = lifestreamAvailability.IsAvailable;
+        var color = available ? new Vector4(0.4f, 1f, 0.4f, 1f) : new Vector4(1f, 0.5f, 0.5f, 1f);
+        ImGui.TextColored(color, available ? "Lifestream installed: yes" : "Lifestream installed: no");
+        ImGui.Spacing();
+        if (!available)
+        {
+            ImGui.TextWrapped("Travel features are hidden because Lifestream is not currently loaded. " +
+                              "Install or enable Lifestream and click Recheck below.");
+            ImGui.Spacing();
+        }
+        if (ImGui.Button("Check for Lifestream"))
+            lifestreamAvailability.Recheck();
+    }
+
+    private void DrawAdvancedTab()
+    {
+        var infer = config.InferTagsFromDescription;
+        if (ImGui.Checkbox("Infer tags from venue description (fallback)", ref infer))
+        {
+            config.InferTagsFromDescription = infer;
+            MarkDirty();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When enabled, tag-like words found in venue descriptions appear as a third source.\n" +
+                             "API and Local tags are never overridden.");
+    }
+
     private void DrawTags()
     {
-        if (!ImGui.CollapsingHeader("Custom tags")) return;
-
+        ImGui.TextDisabled("Suggestion pool used for AddEdit quick-pick. Not effective tags by themselves.");
+        ImGui.Spacing();
         ImGui.SetNextItemWidth(180);
         ImGui.InputTextWithHint("##newCt", "New tag name", ref newCustomTagInput, 32);
         ImGui.SameLine();

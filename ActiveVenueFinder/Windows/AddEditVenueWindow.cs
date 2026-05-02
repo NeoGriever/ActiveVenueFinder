@@ -4,6 +4,8 @@ using System.Linq;
 using System.Numerics;
 using ActiveVenueFinder.Models;
 using ActiveVenueFinder.Services;
+using ActiveVenueFinder.Services.Tags;
+using ActiveVenueFinder.Services.Validation;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 
@@ -12,12 +14,13 @@ namespace ActiveVenueFinder.Windows;
 public sealed class AddEditVenueWindow : Window
 {
     private readonly Config config;
-    private readonly TimezonePickerWindow timezonePicker;
+    private readonly VenueTagService tagService;
 
     private enum EditMode { AddCustom, EditCustom, EditApi }
     private EditMode editMode;
     private int editingCustomId;
     private string editingApiId = "";
+    private List<string> editingApiTags = new();
 
     private string name = "";
     private string world = "";
@@ -28,16 +31,15 @@ public sealed class AddEditVenueWindow : Window
     private bool hasApartment;
     private bool subdivision;
     private bool sfw = true;
-    private string timezoneId = "America/New_York";
-    private HashSet<string> selectedTags = new();
+    private List<string> localTags = new();
     private string newTagInput = "";
+    private List<string> validationErrors = new();
 
     public Action? OnSaved { get; set; }
 
     private static readonly string[] DayNames =
         { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
 
-    // Multi-slot per day: List of slots per day-of-week
     private readonly List<List<EditableSlot>> daySlots = new();
 
     private sealed class EditableSlot
@@ -49,11 +51,11 @@ public sealed class AddEditVenueWindow : Window
         public bool NextDay;
     }
 
-    public AddEditVenueWindow(Config config, TimezonePickerWindow timezonePicker)
+    public AddEditVenueWindow(Config config, VenueTagService tagService)
         : base("Add Venue###AddEditVenue")
     {
         this.config = config;
-        this.timezonePicker = timezonePicker;
+        this.tagService = tagService;
         SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = new Vector2(450, 350),
@@ -71,6 +73,7 @@ public sealed class AddEditVenueWindow : Window
         editMode = EditMode.AddCustom;
         editingCustomId = 0;
         editingApiId = "";
+        editingApiTags = new List<string>();
         ResetFields();
         IsOpen = true;
     }
@@ -80,6 +83,7 @@ public sealed class AddEditVenueWindow : Window
         editMode = EditMode.EditCustom;
         editingCustomId = cv.Id;
         editingApiId = "";
+        editingApiTags = new List<string>();
         PopulateFromCustomVenue(cv);
         IsOpen = true;
     }
@@ -89,14 +93,19 @@ public sealed class AddEditVenueWindow : Window
         editMode = EditMode.EditApi;
         editingApiId = apiId;
         editingCustomId = 0;
+        editingApiTags = venue.Tags?.ToList() ?? new List<string>();
 
         if (config.VenueOverrides.TryGetValue(apiId, out var ov))
-            PopulateFromOverride(ov);
+            PopulateFromOverride(ov, venue);
         else
             PopulateFromVenue(venue);
 
         IsOpen = true;
     }
+
+    private VenueKey GetEditingVenueKey() => editMode == EditMode.EditApi
+        ? VenueKey.Api(editingApiId)
+        : VenueKey.Custom(editingCustomId == 0 ? config.NextCustomVenueId : editingCustomId);
 
     private void PopulateFromCustomVenue(CustomVenue cv)
     {
@@ -109,12 +118,12 @@ public sealed class AddEditVenueWindow : Window
         apartment = cv.Apartment ?? 0;
         subdivision = cv.Subdivision;
         sfw = cv.Sfw;
-        timezoneId = cv.TimezoneId;
-        selectedTags = new HashSet<string>(cv.Tags);
+        localTags = tagService.GetLocal(VenueKey.Custom(cv.Id)).ToList();
         LoadSchedules(cv.Schedules);
+        validationErrors.Clear();
     }
 
-    private void PopulateFromOverride(VenueOverride ov)
+    private void PopulateFromOverride(VenueOverride ov, Venue apiVenue)
     {
         name = ov.Name;
         world = ov.World;
@@ -125,9 +134,9 @@ public sealed class AddEditVenueWindow : Window
         apartment = ov.Apartment ?? 0;
         subdivision = ov.Subdivision;
         sfw = ov.Sfw;
-        timezoneId = ov.TimezoneId;
-        selectedTags = new HashSet<string>(ov.Tags);
+        localTags = tagService.GetLocal(VenueKey.FromVenue(apiVenue)).ToList();
         LoadSchedules(ov.Schedules);
+        validationErrors.Clear();
     }
 
     private void PopulateFromVenue(Venue venue)
@@ -141,9 +150,27 @@ public sealed class AddEditVenueWindow : Window
         apartment = venue.Location.Apartment ?? 0;
         subdivision = venue.Location.Subdivision;
         sfw = venue.Sfw;
-        timezoneId = "America/New_York";
-        selectedTags = new HashSet<string>();
+        localTags = tagService.GetLocal(VenueKey.FromVenue(venue)).ToList();
+        LoadApiSchedules(venue.Schedule);
+        validationErrors.Clear();
+    }
+
+    private void LoadApiSchedules(List<VenueSchedule> schedules)
+    {
         ResetSchedules();
+        foreach (var s in schedules)
+        {
+            // API uses Mon=0..Sun=6, EditableSlot index uses .NET DayOfWeek Sun=0..Sat=6.
+            var idx = ((s.Day % 7) + 8) % 7;
+            daySlots[idx].Add(new EditableSlot
+            {
+                StartHour = s.Start.Hour,
+                StartMinute = s.Start.Minute,
+                EndHour = s.End.Hour,
+                EndMinute = s.End.Minute,
+                NextDay = s.End.NextDay,
+            });
+        }
     }
 
     private void LoadSchedules(List<CustomVenueSchedule> schedules)
@@ -180,9 +207,9 @@ public sealed class AddEditVenueWindow : Window
         hasApartment = false;
         subdivision = false;
         sfw = true;
-        timezoneId = "America/New_York";
-        selectedTags = new HashSet<string>();
+        localTags = new List<string>();
         newTagInput = "";
+        validationErrors.Clear();
         ResetSchedules();
     }
 
@@ -203,57 +230,45 @@ public sealed class AddEditVenueWindow : Window
         ImGui.Checkbox("Subdivision", ref subdivision);
         ImGui.Checkbox("SFW", ref sfw);
 
-        // Timezone via picker
-        var entry = TimezoneRegistry.FindById(timezoneId);
-        var label = entry?.DisplayLabel ?? timezoneId;
-        ImGui.SetNextItemWidth(280);
-        if (ImGui.Button($"TZ: {label}##editTzBtn"))
-        {
-            timezonePicker.OpenPicker(e => timezoneId = e.Id);
-        }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Select schedule timezone");
-
         ImGui.Separator();
         ImGui.TextUnformatted("Tags");
 
-        foreach (var tag in VenueResolver.PredefinedTags)
+        if (editMode == EditMode.EditApi && editingApiTags.Count > 0)
         {
-            var isSet = selectedTags.Contains(tag);
-            if (ImGui.Checkbox(tag + "##tag", ref isSet))
+            ImGui.TextDisabled("From ffxivvenues.com (read-only):");
+            foreach (var apiTag in editingApiTags)
             {
-                if (isSet) selectedTags.Add(tag);
-                else selectedTags.Remove(tag);
+                ImGui.SameLine();
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.78f, 1f, 1f));
+                ImGui.TextUnformatted("[" + apiTag + "]");
+                ImGui.PopStyleColor();
             }
-            ImGui.SameLine();
-        }
-        ImGui.NewLine();
-
-        foreach (var tag in config.CustomTags)
-        {
-            var isSet = selectedTags.Contains(tag);
-            if (ImGui.Checkbox(tag + "##ctag", ref isSet))
-            {
-                if (isSet) selectedTags.Add(tag);
-                else selectedTags.Remove(tag);
-            }
-            ImGui.SameLine();
-        }
-        if (config.CustomTags.Count > 0)
             ImGui.NewLine();
+        }
 
-        ImGui.SetNextItemWidth(120);
+        ImGui.TextDisabled("Local tags (your own):");
+        DrawLocalTagChips();
+
+        ImGui.TextDisabled("Quick add:");
+        DrawQuickAddTags();
+
+        ImGui.SetNextItemWidth(180);
         ImGui.InputText("##newTag", ref newTagInput, 64);
         ImGui.SameLine();
         if (ImGui.Button("Add Tag") && !string.IsNullOrWhiteSpace(newTagInput))
         {
-            var tagName = newTagInput.Trim();
-            if (!VenueResolver.PredefinedTags.Contains(tagName) && !config.CustomTags.Contains(tagName))
+            AddLocalTag(newTagInput.Trim());
+            newTagInput = "";
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Save as suggestion"))
+        {
+            var t = newTagInput.Trim();
+            if (!string.IsNullOrEmpty(t) && !config.CustomTags.Contains(t, StringComparer.OrdinalIgnoreCase))
             {
-                config.CustomTags.Add(tagName);
+                config.CustomTags.Add(t);
                 config.Save();
             }
-            selectedTags.Add(tagName);
-            newTagInput = "";
         }
 
         ImGui.Separator();
@@ -309,11 +324,75 @@ public sealed class AddEditVenueWindow : Window
 
         ImGui.Separator();
 
+        if (validationErrors.Count > 0)
+        {
+            foreach (var err in validationErrors)
+                ImGui.TextColored(new Vector4(1f, 0.3f, 0.3f, 1f), err);
+            ImGui.Spacing();
+        }
+
         if (ImGui.Button("Save"))
             Save();
         ImGui.SameLine();
         if (ImGui.Button("Cancel"))
             IsOpen = false;
+    }
+
+    private void DrawLocalTagChips()
+    {
+        if (localTags.Count == 0)
+        {
+            ImGui.TextDisabled("(none)");
+            return;
+        }
+        for (var i = 0; i < localTags.Count; i++)
+        {
+            ImGui.SameLine();
+            var tag = localTags[i];
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.45f, 0.25f, 0.8f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.55f, 0.35f, 0.9f));
+            if (ImGui.SmallButton(tag + " x##rmtag" + i))
+            {
+                localTags.RemoveAt(i);
+                ImGui.PopStyleColor(2);
+                return;
+            }
+            ImGui.PopStyleColor(2);
+        }
+        ImGui.NewLine();
+    }
+
+    private void DrawQuickAddTags()
+    {
+        var any = false;
+        foreach (var tag in VenueTagService.PredefinedTags)
+        {
+            if (localTags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) continue;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("+ " + tag + "##pre"))
+                AddLocalTag(tag);
+            any = true;
+        }
+        foreach (var tag in config.CustomTags)
+        {
+            if (string.IsNullOrWhiteSpace(tag)) continue;
+            if (localTags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))) continue;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("+ " + tag + "##cus"))
+                AddLocalTag(tag);
+            any = true;
+        }
+        if (any) ImGui.NewLine();
+        else { ImGui.TextDisabled("(no suggestions)"); }
+    }
+
+    private void AddLocalTag(string raw)
+    {
+        var trimmed = raw.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return;
+        if (editingApiTags.Any(t => string.Equals(t, trimmed, StringComparison.OrdinalIgnoreCase))) return;
+        if (localTags.Any(t => string.Equals(t, trimmed, StringComparison.OrdinalIgnoreCase))) return;
+        localTags.Add(trimmed);
     }
 
     private List<CustomVenueSchedule> BuildSchedules()
@@ -339,23 +418,34 @@ public sealed class AddEditVenueWindow : Window
 
     private void Save()
     {
+        var input = new VenueInputValidator.Input(
+            Name: name,
+            World: world,
+            District: district,
+            Ward: ward,
+            Plot: plot,
+            Apartment: hasApartment ? apartment : (int?)null,
+            IsCustomMode: editMode != EditMode.EditApi,
+            EditingCustomId: editMode == EditMode.EditCustom ? editingCustomId : 0);
+
+        var result = VenueInputValidator.Validate(input, config);
+        if (!result.Ok)
+        {
+            validationErrors = result.Errors.ToList();
+            return;
+        }
+        validationErrors.Clear();
+
         var schedules = BuildSchedules();
 
         switch (editMode)
         {
             case EditMode.AddCustom:
             {
-                var isDuplicate = config.CustomVenues.Any(cv =>
-                    cv.World == world &&
-                    cv.District == district &&
-                    cv.Ward == ward &&
-                    cv.Plot == plot);
-                if (isDuplicate)
-                    return;
-
+                var newId = config.NextCustomVenueId++;
                 config.CustomVenues.Add(new CustomVenue
                 {
-                    Id = config.NextCustomVenueId++,
+                    Id = newId,
                     Name = name,
                     World = world,
                     District = district,
@@ -364,24 +454,14 @@ public sealed class AddEditVenueWindow : Window
                     Apartment = hasApartment ? apartment : null,
                     Subdivision = subdivision,
                     Sfw = sfw,
-                    TimezoneId = timezoneId,
                     Schedules = schedules,
-                    Tags = new HashSet<string>(selectedTags),
                 });
+                tagService.SetLocal(VenueKey.Custom(newId), localTags);
                 break;
             }
 
             case EditMode.EditCustom:
             {
-                var isDuplicate = config.CustomVenues.Any(cv =>
-                    cv.Id != editingCustomId &&
-                    cv.World == world &&
-                    cv.District == district &&
-                    cv.Ward == ward &&
-                    cv.Plot == plot);
-                if (isDuplicate)
-                    return;
-
                 var existing = config.CustomVenues.FirstOrDefault(cv => cv.Id == editingCustomId);
                 if (existing != null)
                 {
@@ -393,9 +473,8 @@ public sealed class AddEditVenueWindow : Window
                     existing.Apartment = hasApartment ? apartment : null;
                     existing.Subdivision = subdivision;
                     existing.Sfw = sfw;
-                    existing.TimezoneId = timezoneId;
                     existing.Schedules = schedules;
-                    existing.Tags = new HashSet<string>(selectedTags);
+                    tagService.SetLocal(VenueKey.Custom(editingCustomId), localTags);
                 }
                 break;
             }
@@ -412,10 +491,9 @@ public sealed class AddEditVenueWindow : Window
                     Apartment = hasApartment ? apartment : null,
                     Subdivision = subdivision,
                     Sfw = sfw,
-                    TimezoneId = timezoneId,
                     Schedules = schedules,
-                    Tags = new HashSet<string>(selectedTags),
                 };
+                tagService.SetLocal(VenueKey.Api(editingApiId), localTags, editingApiTags);
                 break;
             }
         }
